@@ -7,6 +7,8 @@ This extension hooks into the Sphinx build process to create markdown versions
 of all documents using the sphinx_markdown_builder.
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 import os
