@@ -137,6 +137,26 @@ def sphinx_build(request) -> Generator[tuple[Sphinx, Path, Path], None, None]:
     yield from _build_sphinx(builder, {"llms_txt_build_parallel": parallel})
 
 
+@pytest.fixture(
+    params=[
+        (builder, parallel, full_setting)
+        for builder in ("html", "dirhtml")
+        for parallel in (True, False)
+        for full_setting in (None, False, True)
+    ]
+)
+def sphinx_build_llms_full_matrix(
+    request,
+) -> Generator[tuple[Sphinx, Path, Path, bool | None], None, None]:
+    """Build every supported llms-full setting and build-mode combination."""
+    builder, parallel, full_setting = request.param
+    overrides = {"llms_txt_build_parallel": parallel}
+    if full_setting is not None:
+        overrides["llms_txt_full_build"] = full_setting
+    for app, build_dir, source_dir in _build_sphinx(builder, overrides):
+        yield app, build_dir, source_dir, full_setting
+
+
 @pytest.fixture
 def sphinx_build_with_suffix_mode_config(
     request,
@@ -156,6 +176,7 @@ def llms_txt_override_build(
     """Build docs with a custom llms.txt source and explicit build settings."""
     overrides = {
         "llms_txt_build_parallel": parallel,
+        "llms_txt_full_build": True,
         "llms_txt_override_source": override_source,
     }
     if suffix_mode is not None:
@@ -163,18 +184,20 @@ def llms_txt_override_build(
     yield from _build_sphinx(builder, overrides)
 
 
-@pytest.fixture
-def llms_txt_override_build_without_full() -> Generator[
-    tuple[Sphinx, Path, Path], None, None
-]:
-    """Build overridden llms.txt without generating llms-full.txt."""
+@pytest.fixture(params=[None, False], ids=["default", "disabled"])
+def llms_txt_override_build_without_full(
+    request,
+) -> Generator[tuple[Sphinx, Path, Path], None, None]:
+    """Build overridden llms.txt with default or disabled full output."""
+    overrides = {
+        "llms_txt_build_parallel": False,
+        "llms_txt_override_source": "index.rst",
+    }
+    if request.param is not None:
+        overrides["llms_txt_full_build"] = request.param
     yield from _build_sphinx(
         "html",
-        {
-            "llms_txt_build_parallel": False,
-            "llms_txt_override_source": "index.rst",
-            "llms_txt_full_build": False,
-        },
+        overrides,
     )
 
 
@@ -360,7 +383,10 @@ def sphinx_build_with_http_base(
 ) -> Generator[tuple[Sphinx, Path, Path], None, None]:
     """Build Sphinx docs with markdown_http_base set."""
     builder, http_base = request.param
-    yield from _build_sphinx(builder, {"markdown_http_base": http_base})
+    yield from _build_sphinx(
+        builder,
+        {"markdown_http_base": http_base, "llms_txt_full_build": True},
+    )
 
 
 def test_llms_txt_sitemap_uses_markdown_http_base(sphinx_build_with_http_base):
@@ -460,6 +486,7 @@ def test_dirhtml_links_match_published_locations(tmp_path: Path):
         'root_doc = "index"\n'
         "llms_txt_build_parallel = False\n"
         'llms_txt_suffix_mode = "auto"\n'
+        "llms_txt_full_build = True\n"
         "markdown_anchor_sections = True\n",
         encoding="utf-8",
     )
@@ -596,6 +623,7 @@ def test_llms_txt_override_source_preserves_other_outputs(
     assert "# Welcome to sphinx-llm" in llms_txt
     assert f"]({expected_link})" in llms_txt
     assert "## Pages" not in llms_txt
+    assert "llms-full.txt" not in llms_txt
 
     for page_path in expected_page_paths:
         assert_file_exists_with_content(output_dir / page_path)
@@ -614,6 +642,7 @@ def test_llms_txt_override_source_respects_full_build(
     llms_txt = (output_dir / "llms.txt").read_text(encoding="utf-8")
     assert "# Welcome to sphinx-llm" in llms_txt
     assert "## Pages" not in llms_txt
+    assert "llms-full.txt" not in llms_txt
     assert not (output_dir / "llms-full.txt").exists()
 
 
@@ -977,13 +1006,39 @@ def test_unsupported_and_internal_builders_do_not_register_discovery(builder: st
     )
 
 
-def test_llms_full_txt_created_by_default(sphinx_build):
-    """Test that llms-full.txt is created by default."""
+def test_llms_full_txt_not_created_by_default(sphinx_build):
+    """Test that llms-full.txt is not created or referenced by default."""
     _, build_dir, _ = sphinx_build
 
     llms_full_txt_path = build_dir / "llms-full.txt"
-    assert llms_full_txt_path.exists(), "llms-full.txt should be created by default"
-    assert llms_full_txt_path.stat().st_size > 0, "llms-full.txt should not be empty"
+    assert not llms_full_txt_path.exists()
+    assert "llms-full.txt" not in (build_dir / "llms.txt").read_text(encoding="utf-8")
+
+
+def test_llms_full_setting_matrix(sphinx_build_llms_full_matrix):
+    """Cover default, disabled, and enabled full output in every build mode."""
+    app, build_dir, _, full_setting = sphinx_build_llms_full_matrix
+    llms_txt = (build_dir / "llms.txt").read_text(encoding="utf-8")
+    llms_full = build_dir / "llms-full.txt"
+
+    if full_setting is not True:
+        assert not llms_full.exists()
+        assert "llms-full.txt" not in llms_txt
+        assert_file_exists_with_content(build_dir / "llms.txt")
+        assert_file_exists_with_content(build_dir / "index.html.md")
+        return
+
+    assert_file_exists_with_content(llms_full)
+    http_base = (getattr(app.config, "markdown_http_base", "") or "").rstrip("/")
+    expected_url = f"{http_base}/llms-full.txt" if http_base else "llms-full.txt"
+    expected_entry = (
+        f"- [llms-full.txt]({expected_url}): Complete documentation in a single file."
+    )
+    assert "## Optional\n\n" in llms_txt
+    assert llms_txt.count(expected_entry) == 1
+    assert "For more comprehensive documentation" not in llms_txt
+    if not http_base:
+        assert (build_dir / expected_url).is_file()
 
 
 @pytest.fixture
@@ -1056,41 +1111,45 @@ def test_markdown_files_still_created_when_full_disabled(sphinx_build_no_llms_fu
         )
 
 
-_LLMS_FULL_FOOTER_PREFIX = "For more comprehensive documentation, see [llms-full.txt]("
-
-
-def test_llms_txt_links_to_llms_full_txt(sphinx_build):
-    """Test that llms.txt ends with a footer link to llms-full.txt when it is generated."""
-    app, build_dir, _ = sphinx_build
-
-    content = (build_dir / "llms.txt").read_text(encoding="utf-8")
-    lines = content.rstrip("\n").split("\n")
-
-    http_base = (getattr(app.config, "markdown_http_base", "") or "").rstrip("/")
-    expected_url = f"{http_base}/llms-full.txt" if http_base else "llms-full.txt"
-    expected_footer = (
-        f"For more comprehensive documentation, see [llms-full.txt]({expected_url})"
-    )
-
-    assert lines[-1] == expected_footer, (
-        f"Last line of llms.txt should be the footer link.\nExpected: {expected_footer!r}\nGot: {lines[-1]!r}"
-    )
-
-
 @pytest.mark.parametrize(
     "sphinx_build_no_llms_full",
     ["html", "dirhtml"],
     indirect=True,
 )
 def test_llms_txt_does_not_link_to_llms_full_when_disabled(sphinx_build_no_llms_full):
-    """Test that llms.txt has no llms-full.txt footer when llms_txt_full_build=False."""
+    """Test that llms.txt has no llms-full reference when explicitly disabled."""
     _, build_dir, _ = sphinx_build_no_llms_full
 
     content = (build_dir / "llms.txt").read_text(encoding="utf-8")
-    last_line = content.rstrip("\n").split("\n")[-1]
-    assert not last_line.startswith(_LLMS_FULL_FOOTER_PREFIX), (
-        "llms.txt should not end with the llms-full.txt footer when llms_txt_full_build is disabled"
-    )
+    assert "llms-full.txt" not in content
+
+
+def test_llms_txt_does_not_reference_stale_full_artifact(tmp_path: Path):
+    """Only a full artifact generated by the current build may be listed."""
+    docs_source_dir = Path(__file__).parent.parent.parent.parent / "docs" / "source"
+    build_dir = tmp_path / "build"
+    build_dir.mkdir()
+    stale_full = build_dir / "llms-full.txt"
+    stale_full.write_text("stale output\n", encoding="utf-8")
+
+    with patch.object(MarkdownGenerator, "build_llms_full_txt", return_value=None):
+        app = Sphinx(
+            srcdir=str(docs_source_dir),
+            confdir=str(docs_source_dir),
+            outdir=str(build_dir),
+            doctreedir=str(tmp_path / "doctrees"),
+            buildername="html",
+            warningiserror=False,
+            freshenv=True,
+            confoverrides={
+                "llms_txt_build_parallel": False,
+                "llms_txt_full_build": True,
+            },
+        )
+        app.build()
+
+    assert stale_full.read_text(encoding="utf-8") == "stale output\n"
+    assert "llms-full.txt" not in (build_dir / "llms.txt").read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -1279,6 +1338,7 @@ def sphinx_build_with_exclude(
         {
             "llms_txt_build_parallel": parallel,
             "llms_txt_exclude": ["apples", "nested/**"],
+            "llms_txt_full_build": True,
         },
     )
 
@@ -1369,7 +1429,10 @@ def test_confdir_outside_srcdir():
             buildername="html",
             warningiserror=False,
             freshenv=True,
-            confoverrides={"llms_txt_build_parallel": True},
+            confoverrides={
+                "llms_txt_build_parallel": True,
+                "llms_txt_full_build": True,
+            },
         )
         app.build()
 

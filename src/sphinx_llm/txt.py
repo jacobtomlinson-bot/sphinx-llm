@@ -87,6 +87,7 @@ class MarkdownGenerator:
         self.parallel = None
         self._summary_cache: dict[str, dict[str, str]] | None = None
         self._loaded_summary_cache_path: Path | None = None
+        self._generated_llms_full_path: Path | None = None
 
     def setup(self):
         """Set up the extension."""
@@ -214,8 +215,9 @@ class MarkdownGenerator:
             self.copy_markdown_files()
 
             # Concatenate all markdown files into llms-full.txt
-            if getattr(self.app.config, "llms_txt_full_build", True):
-                self.build_llms_full_txt()
+            self._generated_llms_full_path = None
+            if getattr(self.app.config, "llms_txt_full_build", False):
+                self._generated_llms_full_path = self.build_llms_full_txt()
 
             # Create llms.txt from a custom source or the generated sitemap
             if getattr(self.app.config, "llms_txt_override_source", ""):
@@ -531,7 +533,7 @@ class MarkdownGenerator:
 
         return LINK_TOKEN_PATTERN.sub(replace_link, content)
 
-    def build_llms_full_txt(self):
+    def build_llms_full_txt(self) -> Path:
         # Concatenate all markdown files into llms-full.txt
         llms_txt_path = self.outdir / "llms-full.txt"
         with open(llms_txt_path, "w", encoding="utf-8") as llms_txt:
@@ -561,6 +563,7 @@ class MarkdownGenerator:
                 llms_txt.write(content)
                 llms_txt.write("\n\n")
         logger.info(f"Concatenated full context into: {llms_txt_path}")
+        return llms_txt_path
 
     def build_custom_llms_txt(self):
         """Write a configured rendered source document to llms.txt."""
@@ -687,14 +690,18 @@ class MarkdownGenerator:
                     f"- [{title}]({url}): {self.get_page_description(md_file)}\n"
                 )
 
-            # Link to llms-full.txt when it was also generated
-            if getattr(self.app.config, "llms_txt_full_build", True):
+            # List llms-full.txt only when this build generated the file.
+            if (
+                self._generated_llms_full_path is not None
+                and self._generated_llms_full_path.is_file()
+            ):
                 if http_base:
                     full_url = f"{http_base}/llms-full.txt"
                 else:
                     full_url = "llms-full.txt"
                 sitemap.write(
-                    f"\n---\n\nFor more comprehensive documentation, see [llms-full.txt]({full_url})\n"
+                    "\n## Optional\n\n"
+                    f"- [llms-full.txt]({full_url}): Complete documentation in a single file.\n"
                 )
 
             logger.info(f"Created llms.txt sitemap: {llms_txt_path}")
@@ -1141,7 +1148,7 @@ def setup(app: Sphinx) -> dict[str, Any]:
     app.add_config_value("llms_txt_description", "", "env")
     app.add_config_value("llms_txt_build_parallel", True, "env")
     app.add_config_value("llms_txt_suffix_mode", "auto", "env")
-    app.add_config_value("llms_txt_full_build", True, "env")
+    app.add_config_value("llms_txt_full_build", False, "env")
     app.add_config_value("llms_txt_exclude", [], "env")
     app.add_config_value("llms_txt_override_source", "", "env")
     generator = MarkdownGenerator(app)
