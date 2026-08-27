@@ -23,7 +23,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 from importlib.metadata import PackageNotFoundError, metadata
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
 import docutils.nodes
@@ -45,17 +45,6 @@ from .version import __version__
 logger = logging.getLogger(__name__)
 LINK_TOKEN_PATTERN = re.compile(rf"{re.escape(LINK_TOKEN_PREFIX)}[0-9a-f]{{32}}")
 SUMMARY_CACHE_VERSION = 1
-
-
-def get_llms_txt_index_path(app: Sphinx, docname: str) -> PurePosixPath:
-    """Return the build-root-relative ``llms.txt`` covering *docname*.
-
-    Nested indexes can replace this root fallback without changing discovery
-    metadata generation. The application and document name are intentionally
-    part of the public seam needed to select the most-specific generated index.
-    """
-    del app, docname
-    return PurePosixPath("llms.txt")
 
 
 @dataclass(frozen=True)
@@ -112,22 +101,19 @@ class MarkdownGenerator:
         doctree: docutils.nodes.document | None,
     ) -> None:
         """Advertise the canonical Markdown page and its covering llms.txt."""
-        del templatename, doctree
         if pagename not in app.env.found_docs:
             return
 
         targets, canonical_layout = self._target_paths_for_docname(pagename)
-        markdown_path = PurePosixPath(
-            targets[canonical_layout].relative_to(self.outdir).as_posix()
-        )
-        llms_txt_path = get_llms_txt_index_path(app, pagename)
         page_uri = app.builder.get_target_uri(pagename)
         markdown_href = html.escape(
-            relative_uri(page_uri, markdown_path.as_posix()), quote=True
+            relative_uri(
+                page_uri,
+                targets[canonical_layout].relative_to(self.outdir).as_posix(),
+            ),
+            quote=True,
         )
-        llms_txt_href = html.escape(
-            relative_uri(page_uri, llms_txt_path.as_posix()), quote=True
-        )
+        llms_txt_href = html.escape(relative_uri(page_uri, "llms.txt"), quote=True)
         context["metatags"] = context.get("metatags", "") + (
             f'\n<link rel="alternate" type="text/markdown" '
             f'href="{markdown_href}">'

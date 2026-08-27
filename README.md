@@ -127,11 +127,6 @@ the most-specific generated index covering that page. Auxiliary HTML pages
 without a Markdown representation, such as the search and general-index pages,
 do not receive discovery links.
 
-These are HTML link elements, not HTTP `Link` response headers. Static Sphinx
-builds cannot control hosting response headers, so configure those separately
-at the web server or CDN if needed. No additional Sphinx configuration is
-required for HTML discovery.
-
 #### Configuration
 
 Supported `conf.py` configuration options for `sphinx_llm.txt`.
