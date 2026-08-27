@@ -52,9 +52,9 @@ When you build your documentation with `sphinx-build` (or `make html`), the
 extension will:
 
 1. Build your documentation as usual
-2. Also build your documentation with the
+2. Automatically run an additional build with the
    [markdown builder](https://pypi.org/project/sphinx-markdown-builder/)
-3. Merges the build outputs together
+3. Merge the build outputs together
    - The markdown files will have the same as the HTML name plus an extra
      `.md` extension
 4. Generate an index file for all the markdown files named `llms.txt`
@@ -372,7 +372,7 @@ you need to make the right choice for your needs.
 | **Dimension**                           | [sphinx-llm](https://github.com/NVIDIA/sphinx-llm)                                                                                                                                          | [sphinx-llms-txt](https://github.com/jdillard/sphinx-llms-txt/)                                |
 | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------| ---------------------------------------------------------------------------------------------- |
 | **Purpose**                             | llms.txt v2 index and individual Markdown pages, with an optional non-standard `llms-full.txt` convenience and LLM summarization capabilities.                                              | Simple `llms.txt` and `llms-full.txt` files creation.                                          |
-| **Individual pages**                    | Outputs a Markdown rendered version for each page.                                                                                                                                          | Source of each page is available at a Sphinx specific `_sources` URL.                          |
+| **Individual pages**                    | Outputs a Markdown-rendered version for each page.                                                                                                                                          | Source of each page is available at a Sphinx-specific `_sources` URL.                          |
 | **Supported docs input formats**        | Works with any Sphinx source format including RST, MyST, etc.                                                                                                                               | Works with any Sphinx source format including RST, MyST, etc.                                  |
 | **Supported `llms.txt` output formats** | Markdown; the opt-in `llms-full.txt` convenience is also Markdown.                                                                                                                          | `llm.txt` is markdown; `llms-full.txt` and pages pass through source format.                   |
 | **Additional features**                 | Generated page summaries and an opt-in concatenated `llms-full.txt` convenience.                                                                                                            | Allows manual configuration of `llms-full.txt` content.                                        |
