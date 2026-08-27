@@ -18,8 +18,7 @@ All notable changes to this project will be documented in this file.
   that conditional content (e.g. `.. only::` directives) renders the same in
   the markdown output as in the HTML build.
 - Made sitemap, discovery, `llms-full.txt`, and generated Markdown links share
-  one canonical path resolver, reject colliding published paths, and remove
-  obsolete variants when switching suffix modes.
+  one canonical path resolver and reject colliding published paths.
 
 ### Changed
 

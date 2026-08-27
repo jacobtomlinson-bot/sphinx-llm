@@ -762,45 +762,42 @@ def test_supported_suffix_modes_publish_canonical_nested_targets(
         assert f"# {relative_path}\n" not in llms_full
 
 
-def test_switching_suffix_modes_removes_stale_targets(tmp_path: Path):
-    """Changing modes in one output directory removes obsolete page variants."""
+def test_suffix_modes_preserve_unowned_output_files(tmp_path: Path):
+    """Candidate paths not owned by sphinx-llm are never removed."""
     source_dir = tmp_path / "source"
     guide_dir = source_dir / "guide"
+    extra_dir = source_dir / "extra" / "guide"
     guide_dir.mkdir(parents=True)
+    extra_dir.mkdir(parents=True)
     (source_dir / "conf.py").write_text(
         'extensions = ["sphinx_llm.txt"]\n'
-        'project = "Suffix switch"\n'
+        'project = "Unowned output"\n'
         'root_doc = "index"\n'
-        "llms_txt_build_parallel = False\n",
+        "llms_txt_build_parallel = False\n"
+        'llms_txt_suffix_mode = "append"\n'
+        'html_extra_path = ["extra"]\n',
         encoding="utf-8",
     )
     (source_dir / "index.rst").write_text(
         "Index\n=====\n\n.. toctree::\n\n   guide/page\n", encoding="utf-8"
     )
     (guide_dir / "page.rst").write_text("Page\n====\n", encoding="utf-8")
+    sentinel = "User-supplied legacy-looking asset\n"
+    (extra_dir / "page.md").write_text(sentinel, encoding="utf-8")
     output_dir = tmp_path / "output"
+    app = Sphinx(
+        srcdir=str(source_dir),
+        confdir=str(source_dir),
+        outdir=str(output_dir),
+        doctreedir=str(tmp_path / "doctrees"),
+        buildername="dirhtml",
+        warningiserror=False,
+        freshenv=True,
+    )
+    app.build()
 
-    def build(suffix_mode: str) -> None:
-        app = Sphinx(
-            srcdir=str(source_dir),
-            confdir=str(source_dir),
-            outdir=str(output_dir),
-            doctreedir=str(tmp_path / f"doctrees-{suffix_mode}"),
-            buildername="dirhtml",
-            confoverrides={"llms_txt_suffix_mode": suffix_mode},
-            warningiserror=False,
-            freshenv=True,
-        )
-        app.build()
-
-    build("auto")
     assert (output_dir / "guide/page/index.html.md").is_file()
-    assert (output_dir / "guide/page.md").is_file()
-
-    build("replace")
-    assert (output_dir / "guide/page/index.md").is_file()
-    assert not (output_dir / "guide/page/index.html.md").exists()
-    assert not (output_dir / "guide/page.md").exists()
+    assert (output_dir / "guide/page.md").read_text(encoding="utf-8") == sentinel
 
 
 @pytest.mark.parametrize(

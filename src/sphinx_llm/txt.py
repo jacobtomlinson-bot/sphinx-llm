@@ -413,22 +413,6 @@ class MarkdownGenerator:
                     )
                 target_owners[target_file] = (docname, layout)
 
-        selected_targets = set(target_owners)
-        stale_candidates: set[Path] = set()
-        builder_name = self.app.builder.name if self.app.builder else "html"
-        for _, docname, _, _ in plans:
-            for suffix_mode in ("append", "replace", "legacy-url"):
-                targets, _ = resolve_markdown_targets(
-                    builder_name, docname, suffix_mode, self.outdir
-                )
-                stale_candidates.update(targets.values())
-        stale_targets = stale_candidates - selected_targets
-        removed_stale_targets = 0
-        for stale_target in sorted(stale_targets):
-            if stale_target.is_file():
-                stale_target.unlink()
-                removed_stale_targets += 1
-
         for md_file, docname, target_files, primary_layout in plans:
             primary_target = target_files[primary_layout]
             content = md_file.read_text(encoding="utf-8")
@@ -461,11 +445,6 @@ class MarkdownGenerator:
         if num_excluded:
             logger.info(
                 f"Excluded {num_excluded} documents from llms.txt and llms-full.txt"
-            )
-        if removed_stale_targets:
-            logger.info(
-                "Removed %d stale context files from previous suffix modes",
-                removed_stale_targets,
             )
 
     def _target_paths_for_docname(

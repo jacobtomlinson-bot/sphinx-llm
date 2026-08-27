@@ -35,7 +35,9 @@ The [llms.txt](https://llmstxt.org/) v2 standard describes a small Markdown
 index that agents can search before fetching the relevant LLM-friendly pages.
 This extension generates that `llms.txt` index and a Markdown version of each
 page. It can also generate `llms-full.txt` as an opt-in sphinx-llm convenience,
-but that concatenated file is optional in the llms.txt v2 standard.
+but that concatenated file is optional in the llms.txt v2 standard. Each page
+can publish Markdown by appending `.md` to its HTML URL or by replacing the
+final `.html` extension with `.md`.
 
 To use the extension add it to your `conf.py`:
 
@@ -55,13 +57,12 @@ extension will:
 2. Automatically run an additional build with the
    [markdown builder](https://pypi.org/project/sphinx-markdown-builder/)
 3. Merge the build outputs together
-   - The Markdown files will have the same name as the HTML output plus an extra
-     `.md` extension
+   - Markdown paths follow the configured append or replace layout
 4. Generate an index file for all the markdown files named `llms.txt`
 5. Optionally concatenate all generated markdown into a single `llms-full.txt`
    file when `llms_txt_full_build = True`
 
-For example, if your build with the `html` builder generates:
+For example, in the default `auto` mode, if your `html` builder generates:
 
 - `_build/html/index.html`
 - `_build/html/apples.html`
@@ -116,7 +117,7 @@ Each document has one canonical representation. Explicit modes select their
 only output; `auto` selects append. `llms.txt`, `llms-full.txt`, generated
 Markdown links, and HTML discovery metadata all use the same canonical target.
 When `auto` emits a compatibility copy, links inside each copy stay within that
-copy's layout. Switching modes removes obsolete variants for current pages.
+copy's layout.
 
 > [!NOTE]
 > This extension only works with HTML builders (like `html` and `dirhtml`).
