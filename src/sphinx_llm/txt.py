@@ -10,6 +10,7 @@ of all documents using the sphinx_markdown_builder.
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import os
 import posixpath
@@ -22,7 +23,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 from importlib.metadata import PackageNotFoundError, metadata
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import docutils.nodes
@@ -30,6 +31,7 @@ from sphinx.application import Sphinx
 from sphinx.errors import ExtensionError
 from sphinx.util import logging
 from sphinx.util.matching import patmatch
+from sphinx.util.osutil import relative_uri
 
 from .markdown_builder import (
     LINK_TARGETS_FILENAME,
@@ -43,6 +45,17 @@ from .version import __version__
 logger = logging.getLogger(__name__)
 LINK_TOKEN_PATTERN = re.compile(rf"{re.escape(LINK_TOKEN_PREFIX)}[0-9a-f]{{32}}")
 SUMMARY_CACHE_VERSION = 1
+
+
+def get_llms_txt_index_path(app: Sphinx, docname: str) -> PurePosixPath:
+    """Return the build-root-relative ``llms.txt`` covering *docname*.
+
+    Nested indexes can replace this root fallback without changing discovery
+    metadata generation. The application and document name are intentionally
+    part of the public seam needed to select the most-specific generated index.
+    """
+    del app, docname
+    return PurePosixPath("llms.txt")
 
 
 @dataclass(frozen=True)
@@ -90,6 +103,37 @@ class MarkdownGenerator:
         """Set up the extension."""
         self.app.connect("builder-inited", self.build_llms_txt)
 
+    def add_discovery_metadata(
+        self,
+        app: Sphinx,
+        pagename: str,
+        templatename: str,
+        context: dict[str, Any],
+        doctree: docutils.nodes.document | None,
+    ) -> None:
+        """Advertise the canonical Markdown page and its covering llms.txt."""
+        del templatename, doctree
+        if pagename not in app.env.found_docs:
+            return
+
+        targets, canonical_layout = self._target_paths_for_docname(pagename)
+        markdown_path = PurePosixPath(
+            targets[canonical_layout].relative_to(self.outdir).as_posix()
+        )
+        llms_txt_path = get_llms_txt_index_path(app, pagename)
+        page_uri = app.builder.get_target_uri(pagename)
+        markdown_href = html.escape(
+            relative_uri(page_uri, markdown_path.as_posix()), quote=True
+        )
+        llms_txt_href = html.escape(
+            relative_uri(page_uri, llms_txt_path.as_posix()), quote=True
+        )
+        context["metatags"] = context.get("metatags", "") + (
+            f'\n<link rel="alternate" type="text/markdown" '
+            f'href="{markdown_href}">'
+            f'\n<link rel="describedby" href="{llms_txt_href}">'
+        )
+
     def build_llms_txt(self, app: Sphinx):
         """Generate markdown files using sphinx_markdown_builder and concatenate them into llms.txt."""
         if not getattr(self.app.config, "llms_txt_enabled", True):
@@ -123,6 +167,8 @@ class MarkdownGenerator:
                 "llms.txt generation only works with HTML builders (html or dirhtml), skipping..."
             )
             return
+
+        self.app.connect("html-page-context", self.add_discovery_metadata)
 
         # Start the markdown builder subproces in the background
         if self.parallel:

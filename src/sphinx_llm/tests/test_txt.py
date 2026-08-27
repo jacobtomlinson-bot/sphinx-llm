@@ -53,6 +53,31 @@ class _ToctreeLinkParser(HTMLParser):
         self._div_depth -= 1
 
 
+class _DiscoveryLinkParser(HTMLParser):
+    """Collect links from the head of generated HTML."""
+
+    def __init__(self):
+        super().__init__()
+        self._in_head = False
+        self.links: list[dict[str, str]] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "head":
+            self._in_head = True
+        elif tag == "link" and self._in_head:
+            self.links.append(dict(attrs))
+
+    def handle_endtag(self, tag):
+        if tag == "head":
+            self._in_head = False
+
+
+def _discovery_links(path: Path) -> list[dict[str, str]]:
+    parser = _DiscoveryLinkParser()
+    parser.feed(path.read_text(encoding="utf-8"))
+    return parser.links
+
+
 def _build_sphinx(
     builder: str, confoverrides: dict | None = None
 ) -> Generator[tuple[Sphinx, Path, Path], None, None]:
@@ -714,6 +739,242 @@ def test_llms_txt_disabled(builder):
             f"combine_builds was called {mock_combine.call_count} time(s) "
             "despite llms_txt_enabled=False — extension ran when it should not have"
         )
+
+
+@pytest.mark.parametrize(
+    ("builder", "suffix_mode", "parallel", "root_markdown", "nested_markdown"),
+    [
+        pytest.param(
+            "html",
+            "auto",
+            True,
+            "index.html.md",
+            "example.html.md",
+            id="html-auto-parallel",
+        ),
+        pytest.param(
+            "html",
+            "replace",
+            False,
+            "index.md",
+            "example.md",
+            id="html-replace-sequential",
+        ),
+        pytest.param(
+            "dirhtml",
+            "auto",
+            True,
+            "index.html.md",
+            "index.html.md",
+            id="dirhtml-auto",
+        ),
+        pytest.param(
+            "dirhtml",
+            "both",
+            False,
+            "index.html.md",
+            "index.html.md",
+            id="dirhtml-both",
+        ),
+        pytest.param(
+            "dirhtml",
+            "file-suffix",
+            True,
+            "index.html.md",
+            "index.html.md",
+            id="dirhtml-file-suffix",
+        ),
+        pytest.param(
+            "dirhtml",
+            "url-suffix",
+            False,
+            "index.md",
+            "../example.md",
+            id="dirhtml-url-suffix",
+        ),
+        pytest.param(
+            "dirhtml",
+            "replace",
+            True,
+            "index.md",
+            "index.md",
+            id="dirhtml-replace",
+        ),
+    ],
+)
+def test_html_pages_have_discovery_metadata(
+    builder: str,
+    suffix_mode: str,
+    parallel: bool,
+    root_markdown: str,
+    nested_markdown: str,
+):
+    """Every HTML page discovers its canonical Markdown and covering llms.txt."""
+    build = _build_sphinx(
+        builder,
+        {
+            "llms_txt_suffix_mode": suffix_mode,
+            "llms_txt_build_parallel": parallel,
+        },
+    )
+    _, build_dir, _ = next(build)
+    pages = {
+        build_dir / "index.html": (root_markdown, "llms.txt"),
+        (
+            build_dir / "nested/example.html"
+            if builder == "html"
+            else build_dir / "nested/example/index.html"
+        ): (
+            nested_markdown,
+            "../llms.txt" if builder == "html" else "../../llms.txt",
+        ),
+    }
+
+    for html_path, (expected_markdown, expected_llms_txt) in pages.items():
+        links = _discovery_links(html_path)
+        alternates = [
+            link
+            for link in links
+            if link.get("rel") == "alternate" and link.get("type") == "text/markdown"
+        ]
+        describedby = [link for link in links if link.get("rel") == "describedby"]
+
+        assert alternates == [
+            {
+                "rel": "alternate",
+                "type": "text/markdown",
+                "href": expected_markdown,
+            }
+        ]
+        assert describedby == [{"rel": "describedby", "href": expected_llms_txt}]
+        for link in (*alternates, *describedby):
+            target = html_path.parent / link["href"]
+            assert_file_exists_with_content(target)
+
+
+@pytest.mark.parametrize("builder", ["html", "dirhtml"])
+def test_disabled_builds_do_not_have_discovery_metadata(builder: str):
+    """Disabling llms.txt leaves HTML metadata unchanged."""
+    build = _build_sphinx(builder, {"llms_txt_enabled": False})
+    _, build_dir, _ = next(build)
+    links = _discovery_links(build_dir / "index.html")
+
+    assert not [
+        link for link in links if link.get("rel") in {"alternate", "describedby"}
+    ]
+
+
+def test_discovery_metadata_covers_source_pages_not_auxiliary_pages(tmp_path: Path):
+    """Discovery is complete for source docs without dangling auxiliary links."""
+    source_dir = tmp_path / "source"
+    guide_dir = source_dir / "guide"
+    guide_dir.mkdir(parents=True)
+    (source_dir / "conf.py").write_text(
+        'extensions = ["sphinx_llm.txt"]\n'
+        'project = "Discovery test"\n'
+        'root_doc = "index"\n'
+        "llms_txt_build_parallel = False\n"
+        'llms_txt_suffix_mode = "replace"\n'
+        'llms_txt_override_source = "index"\n'
+        'llms_txt_exclude = ["excluded"]\n',
+        encoding="utf-8",
+    )
+    (source_dir / "index.rst").write_text(
+        "Index\n=====\n\n.. toctree::\n\n   guide/index\n   guide/page\n   excluded\n",
+        encoding="utf-8",
+    )
+    (guide_dir / "index.rst").write_text(
+        "Guide\n=====\n\n.. meta::\n   :description: Existing metadata must remain.\n",
+        encoding="utf-8",
+    )
+    (guide_dir / "page.rst").write_text("Page\n====\n", encoding="utf-8")
+    (source_dir / "excluded.rst").write_text("Excluded\n========\n", encoding="utf-8")
+    (source_dir / "orphan.rst").write_text(
+        ":orphan:\n\nOrphan\n======\n", encoding="utf-8"
+    )
+    output_dir = tmp_path / "output"
+    app = Sphinx(
+        srcdir=str(source_dir),
+        confdir=str(source_dir),
+        outdir=str(output_dir),
+        doctreedir=str(tmp_path / "doctrees"),
+        buildername="dirhtml",
+        warningiserror=False,
+        freshenv=True,
+    )
+    app.build()
+
+    pages = {
+        "index": (output_dir / "index.html", "index.md", "llms.txt"),
+        "guide/index": (
+            output_dir / "guide/index.html",
+            "index.md",
+            "../llms.txt",
+        ),
+        "guide/page": (
+            output_dir / "guide/page/index.html",
+            "index.md",
+            "../../llms.txt",
+        ),
+        "excluded": (
+            output_dir / "excluded/index.html",
+            "index.md",
+            "../llms.txt",
+        ),
+        "orphan": (
+            output_dir / "orphan/index.html",
+            "index.md",
+            "../llms.txt",
+        ),
+    }
+    for docname, (html_path, markdown_href, llms_txt_href) in pages.items():
+        links = _discovery_links(html_path)
+        alternate = [
+            link
+            for link in links
+            if link.get("rel") == "alternate" and link.get("type") == "text/markdown"
+        ]
+        describedby = [link for link in links if link.get("rel") == "describedby"]
+        assert alternate == [
+            {
+                "rel": "alternate",
+                "type": "text/markdown",
+                "href": markdown_href,
+            }
+        ], docname
+        assert describedby == [{"rel": "describedby", "href": llms_txt_href}], docname
+        assert_file_exists_with_content(html_path.parent / alternate[0]["href"])
+        assert_file_exists_with_content(html_path.parent / describedby[0]["href"])
+
+    guide_html = pages["guide/index"][0].read_text(encoding="utf-8")
+    assert 'content="Existing metadata must remain."' in guide_html
+    assert 'name="description"' in guide_html
+    for auxiliary_name in ("genindex", "search"):
+        auxiliary_path = output_dir / auxiliary_name / "index.html"
+        assert auxiliary_path.exists()
+        assert not [
+            link
+            for link in _discovery_links(auxiliary_path)
+            if link.get("rel") in {"alternate", "describedby"}
+        ]
+
+
+@pytest.mark.parametrize("builder", ["text", "llms-markdown"])
+def test_unsupported_and_internal_builders_do_not_register_discovery(builder: str):
+    """Non-HTML and internal Markdown builders remain unchanged."""
+    app = MagicMock()
+    app.builder.name = builder
+    app.builder.outdir = "/tmp/unused"
+    app.config.llms_txt_enabled = True
+    app.config.llms_txt_build_parallel = True
+    app.config.llms_txt_suffix_mode = "auto"
+    generator = MarkdownGenerator(app)
+
+    generator.build_llms_txt(app)
+
+    assert call("html-page-context", generator.add_discovery_metadata) not in (
+        app.connect.call_args_list
+    )
 
 
 def test_llms_full_txt_created_by_default(sphinx_build):
