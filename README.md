@@ -55,7 +55,7 @@ extension will:
 2. Automatically run an additional build with the
    [markdown builder](https://pypi.org/project/sphinx-markdown-builder/)
 3. Merge the build outputs together
-   - The markdown files will have the same as the HTML name plus an extra
+   - The Markdown files will have the same name as the HTML output plus an extra
      `.md` extension
 4. Generate an index file for all the markdown files named `llms.txt`
 5. Optionally concatenate all generated markdown into a single `llms-full.txt`
