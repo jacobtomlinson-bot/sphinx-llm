@@ -65,10 +65,80 @@ class SummaryOptions:
 class MarkdownLayout(str, Enum):
     """Published Markdown path layout."""
 
-    FILE_SUFFIX = "file-suffix"
-    URL_SUFFIX = "url-suffix"
+    APPEND = "append"
+    LEGACY_URL = "legacy-url"
     REPLACE = "replace"
-    HTML = "html"
+
+
+SUFFIX_MODE_ALIASES = {
+    "both": "auto",
+    "file-suffix": "append",
+    "url-suffix": "legacy-url",
+}
+SUFFIX_MODES = ("auto", "append", "replace", "legacy-url")
+SUPPORTED_SUFFIX_MODES = (*SUFFIX_MODES, *SUFFIX_MODE_ALIASES)
+
+
+def normalize_suffix_mode(suffix_mode: str) -> str:
+    """Return the effective v2 suffix mode for a configured value."""
+    effective_mode = SUFFIX_MODE_ALIASES.get(suffix_mode, suffix_mode)
+    if effective_mode not in SUFFIX_MODES:
+        valid_modes = ", ".join(repr(mode) for mode in SUPPORTED_SUFFIX_MODES)
+        raise ExtensionError(
+            f"Invalid llms_txt_suffix_mode: {suffix_mode!r}. "
+            f"Must be one of: {valid_modes}"
+        )
+    return effective_mode
+
+
+def resolve_markdown_targets(
+    builder_name: str,
+    docname: str,
+    suffix_mode: str,
+    outdir: Path,
+) -> tuple[dict[MarkdownLayout, Path], MarkdownLayout]:
+    """Resolve every published target and the canonical layout for a document."""
+    effective_mode = normalize_suffix_mode(suffix_mode)
+    doc_path = Path(docname)
+
+    if builder_name == "dirhtml":
+        if doc_path == Path("index"):
+            html_target = outdir / "index.html"
+            legacy_url_target = outdir / "index.md"
+        elif doc_path.name == "index":
+            html_target = outdir / doc_path.parent / "index.html"
+            legacy_url_target = (
+                outdir / doc_path.parent.parent / f"{doc_path.parent.name}.md"
+            )
+        else:
+            html_target = outdir / doc_path / "index.html"
+            legacy_url_target = outdir / doc_path.parent / f"{doc_path.name}.md"
+    else:
+        html_target = outdir / doc_path.parent / f"{doc_path.name}.html"
+        # url-suffix historically had no special behavior for html builds.
+        legacy_url_target = Path(f"{html_target}.md")
+
+    append_target = Path(f"{html_target}.md")
+    replace_target = html_target.with_suffix(".md")
+
+    if effective_mode == "replace":
+        return {MarkdownLayout.REPLACE: replace_target}, MarkdownLayout.REPLACE
+    if effective_mode == "append" or builder_name != "dirhtml":
+        return {MarkdownLayout.APPEND: append_target}, MarkdownLayout.APPEND
+    if effective_mode == "legacy-url":
+        return (
+            {MarkdownLayout.LEGACY_URL: legacy_url_target},
+            MarkdownLayout.LEGACY_URL,
+        )
+    if effective_mode == "auto":
+        return (
+            {
+                MarkdownLayout.APPEND: append_target,
+                MarkdownLayout.LEGACY_URL: legacy_url_target,
+            },
+            MarkdownLayout.APPEND,
+        )
+    raise AssertionError(f"Unhandled normalized suffix mode: {effective_mode!r}")
 
 
 class MarkdownGenerator:
@@ -132,18 +202,15 @@ class MarkdownGenerator:
         self.outdir = Path(app.builder.outdir)
         self.md_build_dir = self.outdir / "_markdown_build"
         self.parallel = getattr(self.app.config, "llms_txt_build_parallel", True)
-        self.suffix_mode = getattr(self.app.config, "llms_txt_suffix_mode", "auto")
-
-        # Backward compatibility: treat "both" as "auto"
-        if self.suffix_mode == "both":
-            self.suffix_mode = "auto"
-
-        # Validate suffix_mode configuration
-        valid_modes = {"file-suffix", "url-suffix", "auto", "replace"}
-        if self.suffix_mode not in valid_modes:
-            raise ExtensionError(
-                f"Invalid llms_txt_suffix_mode: {self.suffix_mode!r}. "
-                f"Must be one of {valid_modes}"
+        configured_suffix_mode = getattr(
+            self.app.config, "llms_txt_suffix_mode", "auto"
+        )
+        self.suffix_mode = normalize_suffix_mode(configured_suffix_mode)
+        if configured_suffix_mode in SUFFIX_MODE_ALIASES:
+            logger.info(
+                "llms_txt_suffix_mode=%r is deprecated; use %r instead",
+                configured_suffix_mode,
+                self.suffix_mode,
             )
 
         if app.builder and app.builder.name == "markdown":
@@ -294,118 +361,12 @@ class MarkdownGenerator:
         except Exception as e:
             logger.error(f"Failed to generate markdown files: {e}")
 
-    def _determine_suffix_targets(
-        self, file_suffix_target: Path, url_suffix_target: Path
-    ) -> tuple[dict[MarkdownLayout, Path], MarkdownLayout]:
-        """Determine target file paths based on suffix mode.
-
-        Returns:
-            Tuple of (targets by layout, primary layout)
-        """
-        if self.suffix_mode == "file-suffix":
-            return (
-                {MarkdownLayout.FILE_SUFFIX: file_suffix_target},
-                MarkdownLayout.FILE_SUFFIX,
-            )
-        elif self.suffix_mode == "url-suffix":
-            return (
-                {MarkdownLayout.URL_SUFFIX: url_suffix_target},
-                MarkdownLayout.URL_SUFFIX,
-            )
-        elif self.suffix_mode == "auto":
-            return (
-                {
-                    MarkdownLayout.FILE_SUFFIX: file_suffix_target,
-                    MarkdownLayout.URL_SUFFIX: url_suffix_target,
-                },
-                MarkdownLayout.FILE_SUFFIX,
-            )
-        raise ExtensionError(
-            f"Unhandled suffix mode in _determine_suffix_targets: {self.suffix_mode!r}"
-        )
-
-    def _get_dirhtml_root_index_targets(
-        self, new_name: str
-    ) -> tuple[dict[MarkdownLayout, Path], MarkdownLayout]:
-        """Get targets for root index file in dirhtml builder."""
-        if self.suffix_mode == "replace":
-            replace_target = self.outdir / "index.md"
-            return {MarkdownLayout.REPLACE: replace_target}, MarkdownLayout.REPLACE
-
-        file_suffix_target = self.outdir / new_name  # index.html.md
-        url_suffix_target = self.outdir / "index.md"  # index.md
-        return self._determine_suffix_targets(file_suffix_target, url_suffix_target)
-
-    def _get_dirhtml_nested_index_targets(
-        self, rel_path: Path, new_name: str
-    ) -> tuple[dict[MarkdownLayout, Path], MarkdownLayout]:
-        """Get targets for nested index file in dirhtml builder (e.g., subdir/index.rst)."""
-        if self.suffix_mode == "replace":
-            replace_target = self.outdir / rel_path.parent / "index.md"
-            return {MarkdownLayout.REPLACE: replace_target}, MarkdownLayout.REPLACE
-
-        file_suffix_target = (
-            self.outdir / rel_path.parent / new_name
-        )  # subdir/index.html.md
-        url_suffix_target = self.outdir / f"{rel_path.parent}.md"  # subdir.md
-        return self._determine_suffix_targets(file_suffix_target, url_suffix_target)
-
-    def _get_dirhtml_non_index_targets(
-        self, rel_path: Path
-    ) -> tuple[dict[MarkdownLayout, Path], MarkdownLayout]:
-        """Get targets for non-index file in dirhtml builder."""
-        if self.suffix_mode == "replace":
-            replace_target = self.outdir / rel_path.with_suffix("") / "index.md"
-            return {MarkdownLayout.REPLACE: replace_target}, MarkdownLayout.REPLACE
-
-        file_suffix_target = self.outdir / rel_path.with_suffix("") / "index.html.md"
-        url_suffix_target = self.outdir / rel_path.with_suffix(".md")
-        return self._determine_suffix_targets(file_suffix_target, url_suffix_target)
-
-    def _get_html_targets(
-        self, rel_path: Path, base_name: str, new_name: str
-    ) -> tuple[dict[MarkdownLayout, Path], MarkdownLayout]:
-        """Get targets for html builder."""
-        if self.suffix_mode == "replace":
-            # Replace mode: foo.md (replace .html with .md)
-            replace_target = (
-                self.outdir / rel_path.parent / f"{base_name}.md"
-                if rel_path.parent != Path(".")
-                else self.outdir / f"{base_name}.md"
-            )
-            return {MarkdownLayout.REPLACE: replace_target}, MarkdownLayout.REPLACE
-
-        # Default behavior: foo.html.md
-        target_file = (
-            self.outdir / rel_path.parent / new_name
-            if rel_path.parent != Path(".")
-            else self.outdir / new_name
-        )
-        return {MarkdownLayout.HTML: target_file}, MarkdownLayout.HTML
-
     def _get_target_paths(
         self, md_file: Path
     ) -> tuple[dict[MarkdownLayout, Path], MarkdownLayout]:
-        """Determine target file locations based on builder and file type.
-
-        Returns:
-            Tuple of (targets by layout, primary layout)
-        """
+        """Determine target file locations for a Markdown build output."""
         rel_path = md_file.relative_to(self.md_build_dir)
-        base_name = rel_path.stem
-        new_name = f"{base_name}.html.md"
-
-        if self.app.builder and self.app.builder.name == "dirhtml":
-            # dirhtml builder has special handling for index files
-            if base_name == "index" and rel_path.parent == Path("."):
-                return self._get_dirhtml_root_index_targets(new_name)
-            elif base_name == "index":
-                return self._get_dirhtml_nested_index_targets(rel_path, new_name)
-            else:
-                return self._get_dirhtml_non_index_targets(rel_path)
-        else:
-            # Other builders (html) use simpler path structure
-            return self._get_html_targets(rel_path, base_name, new_name)
+        return self._target_paths_for_docname(rel_path.with_suffix("").as_posix())
 
     def _is_excluded(self, docname: str) -> bool:
         """Check whether a document is excluded from llms.txt and llms-full.txt."""
@@ -423,7 +384,7 @@ class MarkdownGenerator:
 
     def copy_markdown_files(self):
         """Copy markdown files from build directory to output directory."""
-        md_files = list(self.md_build_dir.rglob("*.md"))
+        md_files = sorted(self.md_build_dir.rglob("*.md"))
         self.generated_markdown_files = []
         self._docname_by_output_file = {}
         num_excluded = 0
@@ -433,12 +394,44 @@ class MarkdownGenerator:
             link_targets_path.read_text(encoding="utf-8")
         )
 
+        plans = []
+        target_owners: dict[Path, tuple[str, MarkdownLayout]] = {}
         for md_file in md_files:
             target_files, primary_layout = self._get_target_paths(md_file)
-            primary_target = target_files[primary_layout]
             docname = self._get_docname_from_md_file(md_file)
-            content = md_file.read_text(encoding="utf-8")
             self._markdown_file_by_docname[docname] = md_file
+            plans.append((md_file, docname, target_files, primary_layout))
+            for layout, target_file in target_files.items():
+                owner = target_owners.get(target_file)
+                if owner is not None:
+                    owner_docname, owner_layout = owner
+                    relative_target = target_file.relative_to(self.outdir).as_posix()
+                    raise ExtensionError(
+                        f"Documents {owner_docname!r} ({owner_layout.value}) and "
+                        f"{docname!r} ({layout.value}) resolve to the same published "
+                        f"Markdown path {relative_target!r}"
+                    )
+                target_owners[target_file] = (docname, layout)
+
+        selected_targets = set(target_owners)
+        stale_candidates: set[Path] = set()
+        builder_name = self.app.builder.name if self.app.builder else "html"
+        for _, docname, _, _ in plans:
+            for suffix_mode in ("append", "replace", "legacy-url"):
+                targets, _ = resolve_markdown_targets(
+                    builder_name, docname, suffix_mode, self.outdir
+                )
+                stale_candidates.update(targets.values())
+        stale_targets = stale_candidates - selected_targets
+        removed_stale_targets = 0
+        for stale_target in sorted(stale_targets):
+            if stale_target.is_file():
+                stale_target.unlink()
+                removed_stale_targets += 1
+
+        for md_file, docname, target_files, primary_layout in plans:
+            primary_target = target_files[primary_layout]
+            content = md_file.read_text(encoding="utf-8")
 
             # Write the file with links for its published location.
             for layout, target_file in target_files.items():
@@ -469,12 +462,19 @@ class MarkdownGenerator:
             logger.info(
                 f"Excluded {num_excluded} documents from llms.txt and llms-full.txt"
             )
+        if removed_stale_targets:
+            logger.info(
+                "Removed %d stale context files from previous suffix modes",
+                removed_stale_targets,
+            )
 
     def _target_paths_for_docname(
         self, docname: str
     ) -> tuple[dict[MarkdownLayout, Path], MarkdownLayout]:
-        markdown_file = self.md_build_dir / f"{docname}.md"
-        return self._get_target_paths(markdown_file)
+        builder_name = self.app.builder.name if self.app.builder else "html"
+        return resolve_markdown_targets(
+            builder_name, docname, self.suffix_mode, self.outdir
+        )
 
     def _markdown_http_base(self) -> str:
         return (

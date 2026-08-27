@@ -8,6 +8,8 @@ All notable changes to this project will be documented in this file.
 
 - Added llms.txt v2 discovery links to source-backed HTML pages, advertising
   each page's canonical Markdown representation and its covering `llms.txt`.
+- Added the llms.txt v2 `append` and `replace` suffix-mode terminology, plus an
+  explicitly named `legacy-url` compatibility mode.
 
 ### Fixed
 
@@ -15,6 +17,9 @@ All notable changes to this project will be documented in this file.
   dynamic builder-derived tags such as `html`) to the markdown sub-build so
   that conditional content (e.g. `.. only::` directives) renders the same in
   the markdown output as in the HTML build.
+- Made sitemap, discovery, `llms-full.txt`, and generated Markdown links share
+  one canonical path resolver, reject colliding published paths, and remove
+  obsolete variants when switching suffix modes.
 
 ### Changed
 
@@ -44,6 +49,13 @@ All notable changes to this project will be documented in this file.
 agents to search `llms.txt` and fetch linked pages on demand. Projects that
 still publish the concatenated convenience file must set
 `llms_txt_full_build = True` in `conf.py`.
+
+The deprecated `llms_txt_suffix_mode` values remain accepted. Replace
+`file-suffix` with `append`, `url-suffix` with `legacy-url`, and `both` with
+`auto` without changing published paths. The legacy `dirhtml` `page.md` path is
+not v2 replace mode's `page/index.md`; select `replace` only when that URL
+change is intended. `auto` keeps its existing outputs and selects append as
+the canonical target.
 
 The deprecated `:hash:` option remains accepted for existing `docref`
 directives. Matching pre-#115 MD5 hashes and PR #115 setting-aware hashes seed

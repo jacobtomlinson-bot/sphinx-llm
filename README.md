@@ -72,28 +72,51 @@ The extension will also create:
 - `_build/html/index.html.md`
 - `_build/html/apples.html.md`
 
-With the `dirhtml` builder, which creates URLs like `/apples/` instead of
-`/apples.html`, the extension generates markdown files in both the file-suffix
-format (`page/index.html.md`) and the URL-suffix format (`page.md`) by default:
+llms.txt v2 names the two standard layouts after how they transform the HTML
+URL:
+
+- **append** adds `.md`: `page.html` becomes `page.html.md`, while a `dirhtml`
+  URL such as `page/` becomes `page/index.html.md`.
+- **replace** replaces `.html` with `.md`: `page.html` becomes `page.md`, while
+  a `dirhtml` URL such as `page/` becomes `page/index.md`.
+
+The default `auto` mode remains backward compatible. It emits the append form
+for both builders and also emits the legacy `page.md` form for `dirhtml`:
 
 - `_build/dirhtml/llms.txt`
 - `_build/dirhtml/index.html.md`
-- `_build/dirhtml/apples/index.html.md` (file-suffix)
-- `_build/dirhtml/apples.md` (URL-suffix, matches Claude docs behavior like
+- `_build/dirhtml/apples/index.html.md` (v2 append)
+- `_build/dirhtml/apples.md` (legacy URL compatibility, matching sites like
   `https://platform.claude.com/docs/overview.md`)
 
 You can control which format(s) are generated using the `llms_txt_suffix_mode`
 configuration option:
 
-- `"auto"` (default): For `dirhtml`, generates both file-suffix and URL-suffix
-  formats; for `html`, generates the standard `.html.md` format
-- `"file-suffix"`: For `dirhtml`, only generates `page/index.html.md`; for
-  `html`, generates the standard `.html.md` format
-- `"url-suffix"`: For `dirhtml`, only generates `page.md`; for `html`,
-  generates the standard `.html.md` format
-- `"replace"`: Replaces the `.html` extension with `.md` in the HTML output
-  path. For `html` builder: `page.html` → `page.md`. For `dirhtml` builder:
-  `page/index.html` → `page/index.md`
+- `"append"`: Emits only the v2 append form.
+- `"replace"`: Emits only the v2 replace form.
+- `"legacy-url"`: Preserves the pre-v2 `dirhtml` layout (`page.md`). For the
+  `html` builder, its historical behavior is the append form.
+- `"auto"` (default): Emits append for `html`; emits append and `legacy-url`
+  for `dirhtml` and selects append as canonical.
+
+Existing values remain supported as deprecated aliases:
+
+- `"file-suffix"` → `"append"` (paths are unchanged)
+- `"url-suffix"` → `"legacy-url"` (paths are unchanged)
+- `"both"` → `"auto"` (outputs and canonical selection are unchanged)
+
+The legacy `dirhtml` path `guide/page.md` is not the v2 replace path
+`guide/page/index.md`. Migrate `url-suffix` to `legacy-url` to preserve existing
+URLs, or choose `replace` when changing published URLs is acceptable. Nested
+index pages make the distinction especially clear: `guide/index` publishes as
+`guide/index.html.md` in append mode, `guide/index.md` in replace mode, and
+`guide.md` in legacy URL mode.
+
+Each document has one canonical representation. Explicit modes select their
+only output; `auto` selects append. `llms.txt`, `llms-full.txt`, generated
+Markdown links, and HTML discovery metadata all use the same canonical target.
+When `auto` emits a compatibility copy, links inside each copy stay within that
+copy's layout. Switching modes removes obsolete variants for current pages.
 
 > [!NOTE]
 > This extension only works with HTML builders (like `html` and `dirhtml`).
@@ -109,12 +132,11 @@ these elements to the HTML document's head:
 <link rel="describedby" href="llms.txt">
 ```
 
-The alternate link follows the canonical output selected by the effective
-`llms_txt_suffix_mode`. For example, an `html` page at `guide/page.html` links
-to `page.html.md` normally or `page.md` in `replace` mode. A `dirhtml` page at
-`guide/page/` links to `index.html.md` normally or `index.md` in `replace`
-mode. Modes that publish multiple representations still advertise exactly one
-canonical representation.
+The alternate link follows the same canonical output selected for `llms.txt`.
+For example, an `html` page at `guide/page.html` links to `page.html.md` in
+append mode or `page.md` in replace mode. A `dirhtml` page at `guide/page/`
+links to `index.html.md` in append mode, `index.md` in replace mode, or
+`../page.md` in legacy URL mode. Multi-output `auto` mode advertises append.
 
 Both links are relative to the published HTML URL, so they continue to work
 when the output is hosted below a site subpath. The `describedby` link currently
@@ -133,7 +155,7 @@ Supported `conf.py` configuration options for `sphinx_llm.txt`.
 | `llms_txt_enabled` | Enable or disable all llms.txt artefact generation. Set to `False` to skip the entire extension without removing it from `conf.py`. Use `sphinx-build -D llms_txt_enabled=0` to skip on a per-build basis. | `bool` | `True` |
 | `llms_txt_description` | Override the project description set in `llms.txt` | `str` | Uses the project description from `pyproject.toml` by default |
 | `llms_txt_build_parallel` | Build markdown files in parallel to the HTML files. | `bool` | `True` |
-| `llms_txt_suffix_mode` | Suffix mode for generated markdown files. Options: `"auto"` (default behavior for each builder), `"file-suffix"` (spec-compliant format), `"url-suffix"` (URL-style format), or `"replace"` (replaces `.html` with `.md`). Note: `"both"` is deprecated but still supported (treated as `"auto"`). | `str` | `"auto"` |
+| `llms_txt_suffix_mode` | Published Markdown layout. `"append"` and `"replace"` are the llms.txt v2 forms; `"legacy-url"` preserves the pre-v2 `dirhtml` `page.md` layout; `"auto"` emits append plus the legacy form for `dirhtml` and makes append canonical. Deprecated aliases remain supported: `"file-suffix"` → `"append"`, `"url-suffix"` → `"legacy-url"`, and `"both"` → `"auto"`. | `str` | `"auto"` |
 | `llms_txt_full_build` | Generate the optional, non-standard `llms-full.txt` convenience file and list it in generated `llms.txt` output. Set to `True` to opt in. | `bool` | `False` |
 | `llms_txt_exclude` | A list of Sphinx wildcard patterns matched against document names (not regular expressions or source paths) to exclude from `llms.txt` and `llms-full.txt`. `*` does not cross `/`, while `**` does; for example, `"reference/generated/**"`. The individual markdown files for excluded documents are still generated. | `list[str]` | `[]` |
 | `llms_txt_override_source` | Advanced option that overrides the automatically generated `llms.txt` sitemap with the rendered contents of a custom Sphinx source document. Specify a docname or source path relative to the source directory, such as `"llms-txt"` or `"llms-txt.rst"`. | `str` | `""` |
