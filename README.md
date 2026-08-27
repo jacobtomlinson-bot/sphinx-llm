@@ -102,6 +102,31 @@ configuration option:
 > [!NOTE]
 > This extension only works with HTML builders (like `html` and `dirhtml`).
 
+#### HTML discovery metadata
+
+Each source-backed HTML page advertises both its canonical Markdown
+representation and the `llms.txt` file that describes it. The extension adds
+these elements to the HTML document's head:
+
+```html
+<link rel="alternate" type="text/markdown" href="page.html.md">
+<link rel="describedby" href="llms.txt">
+```
+
+The alternate link follows the canonical output selected by the effective
+`llms_txt_suffix_mode`. For example, an `html` page at `guide/page.html` links
+to `page.html.md` normally or `page.md` in `replace` mode. A `dirhtml` page at
+`guide/page/` links to `index.html.md` normally or `index.md` in `replace`
+mode. Modes that publish multiple representations still advertise exactly one
+canonical representation.
+
+Both links are relative to the published HTML URL, so they continue to work
+when the output is hosted below a site subpath. The `describedby` link currently
+uses the build's root `llms.txt`; when nested indexes are generated, it selects
+the most-specific generated index covering that page. Auxiliary HTML pages
+without a Markdown representation, such as the search and general-index pages,
+do not receive discovery links.
+
 #### Configuration
 
 Supported `conf.py` configuration options for `sphinx_llm.txt`.

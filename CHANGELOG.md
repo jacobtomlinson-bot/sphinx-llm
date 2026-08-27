@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Added llms.txt v2 discovery links to source-backed HTML pages, advertising
+  each page's canonical Markdown representation and its covering `llms.txt`.
+
 ### Fixed
 
 - Forwarded the primary build's tags (`sphinx-build -t` option, including the
