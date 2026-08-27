@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 from collections.abc import Generator
 from html.parser import HTMLParser
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from unittest.mock import MagicMock, call, patch
 
@@ -22,7 +22,7 @@ from sphinx.application import Sphinx
 from sphinx.errors import ExtensionError
 
 from sphinx_llm.markdown_builder import LINK_TARGETS_FILENAME
-from sphinx_llm.txt import MarkdownGenerator
+from sphinx_llm.txt import MarkdownGenerator, get_llms_txt_index_path
 
 
 class _ToctreeLinkParser(HTMLParser):
@@ -77,6 +77,16 @@ def _discovery_links(path: Path) -> list[dict[str, str]]:
     parser = _DiscoveryLinkParser()
     parser.feed(path.read_text(encoding="utf-8"))
     return parser.links
+
+
+def _sitemap_entries(path: Path) -> dict[str, str]:
+    """Return sitemap titles and targets in source order."""
+    entries = re.findall(
+        r"^- \[([^]]+)]\(([^)]+)\):",
+        path.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    return dict(entries)
 
 
 def _build_sphinx(
@@ -425,7 +435,7 @@ def test_llms_txt_sitemap_uses_markdown_http_base(sphinx_build_with_http_base):
     """Test that llms.txt links are absolute when markdown_http_base is configured."""
     app, build_dir, _ = sphinx_build_with_http_base
 
-    http_base = app.config._raw_config.get("markdown_http_base", "").rstrip("/")
+    http_base = getattr(app.config, "markdown_http_base", "").rstrip("/")
 
     llms_txt_path = build_dir / "llms.txt"
     assert llms_txt_path.exists(), f"llms.txt not found: {llms_txt_path}"
@@ -1444,7 +1454,7 @@ def test_html_pages_have_discovery_metadata(
             else build_dir / "nested/example/index.html"
         ): (
             nested_markdown,
-            "../llms.txt" if builder == "html" else "../../llms.txt",
+            "llms.txt",
         ),
     }
 
@@ -1468,6 +1478,303 @@ def test_html_pages_have_discovery_metadata(
         for link in (*alternates, *describedby):
             target = html_path.parent / link["href"]
             assert_file_exists_with_content(target)
+
+
+@pytest.mark.parametrize(
+    ("builder", "suffix_mode", "parallel", "index_target", "example_target"),
+    [
+        ("html", "auto", False, "index.html.md", "example.html.md"),
+        ("html", "replace", True, "index.md", "example.md"),
+        ("dirhtml", "auto", True, "index.html.md", "example/index.html.md"),
+        (
+            "dirhtml",
+            "file-suffix",
+            False,
+            "index.html.md",
+            "example/index.html.md",
+        ),
+        ("dirhtml", "url-suffix", True, "../nested.md", "example.md"),
+        ("dirhtml", "replace", False, "index.md", "example/index.md"),
+    ],
+)
+def test_nested_indexes_use_existing_docs_fixture_and_canonical_targets(
+    builder: str,
+    suffix_mode: str,
+    parallel: bool,
+    index_target: str,
+    example_target: str,
+) -> None:
+    """Nested scopes reuse canonical Markdown targets from the shared fixture."""
+    build = _build_sphinx(
+        builder,
+        {
+            "llms_txt_build_parallel": parallel,
+            "llms_txt_exclude": ["nested/orphan"],
+            "llms_txt_suffix_mode": suffix_mode,
+        },
+    )
+    app, build_dir, _ = next(build)
+
+    nested_entries = _sitemap_entries(build_dir / "nested" / "llms.txt")
+    deeper_entries = _sitemap_entries(build_dir / "nested" / "deeper" / "llms.txt")
+    assert list(nested_entries) == ["Nested examples", "Example", "Deeper Example"]
+    assert nested_entries["Nested examples"] == index_target
+    assert deeper_entries == {"Deeper Example": example_target}
+    assert nested_entries["Example"] == example_target
+    assert (build_dir / "nested" / example_target).is_file()
+    orphan_target = example_target.replace("example", "orphan", 1)
+    assert (build_dir / "nested" / orphan_target).is_file()
+    assert "Nested Orphan" not in nested_entries
+    assert get_llms_txt_index_path(app, "nested/index") == PurePosixPath(
+        "nested/llms.txt"
+    )
+    expected_deeper_index = (
+        PurePosixPath("nested/deeper/llms.txt")
+        if builder == "html"
+        else PurePosixPath("nested/deeper/example/llms.txt")
+    )
+    assert (
+        get_llms_txt_index_path(app, "nested/deeper/example") == expected_deeper_index
+    )
+
+    expected_indexes = {
+        "llms.txt",
+        "nested/llms.txt",
+        "nested/deeper/llms.txt",
+    }
+    if builder == "dirhtml":
+        expected_indexes.update(
+            {
+                "apples/llms.txt",
+                "meta_example/llms.txt",
+                "nested/deeper/example/llms.txt",
+                "nested/example/llms.txt",
+                "test/llms.txt",
+            }
+        )
+    assert {
+        path.relative_to(build_dir).as_posix() for path in build_dir.rglob("llms.txt")
+    } == expected_indexes
+    for nested_index in expected_indexes - {"llms.txt"}:
+        assert "[llms-full.txt](" not in (build_dir / nested_index).read_text(
+            encoding="utf-8"
+        )
+
+
+@pytest.mark.parametrize(
+    ("builder", "expected_target"),
+    [
+        ("html", "nested/example.html.md"),
+        ("dirhtml", "nested/example/index.html.md"),
+    ],
+)
+def test_nested_index_entries_honor_markdown_http_base(
+    builder: str, expected_target: str
+) -> None:
+    """Absolute Markdown targets are identical at every sitemap depth."""
+    build = _build_sphinx(
+        builder,
+        {
+            "llms_txt_build_parallel": False,
+            "markdown_http_base": "https://example.test/docs",
+        },
+    )
+    _, build_dir, _ = next(build)
+
+    nested_entries = _sitemap_entries(build_dir / "nested" / "llms.txt")
+    assert nested_entries["Example"] == (f"https://example.test/docs/{expected_target}")
+
+
+@pytest.mark.parametrize(
+    ("builder", "parallel", "root_href"),
+    [
+        ("html", False, "../llms.txt"),
+        ("dirhtml", True, "../../llms.txt"),
+    ],
+)
+def test_nested_indexes_can_be_disabled(
+    builder: str, parallel: bool, root_href: str
+) -> None:
+    """The nested switch retains root outputs and selects root discovery."""
+    build = _build_sphinx(
+        builder,
+        {
+            "llms_txt_build_parallel": parallel,
+            "llms_txt_nested_enabled": False,
+        },
+    )
+    app, build_dir, _ = next(build)
+    html_path = (
+        build_dir / "nested" / "example.html"
+        if builder == "html"
+        else build_dir / "nested" / "example" / "index.html"
+    )
+
+    assert {
+        path.relative_to(build_dir).as_posix() for path in build_dir.rglob("llms.txt")
+    } == {"llms.txt"}
+    describedby = [
+        link for link in _discovery_links(html_path) if link.get("rel") == "describedby"
+    ]
+    assert describedby == [{"rel": "describedby", "href": root_href}]
+    assert get_llms_txt_index_path(app, "nested/example") == PurePosixPath("llms.txt")
+
+
+@pytest.mark.parametrize("builder", ["html", "dirhtml"])
+def test_disabled_nested_discovery_ignores_stale_indexes(builder: str) -> None:
+    """A reused output tree never makes stale nested files authoritative."""
+    docs_source_dir = Path(__file__).parents[3] / "docs" / "source"
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        build_dir = temp_path / "build"
+        doctree_dir = temp_path / "doctrees"
+
+        def build(nested_enabled: bool, *, freshenv: bool) -> Sphinx:
+            app = Sphinx(
+                srcdir=str(docs_source_dir),
+                confdir=str(docs_source_dir),
+                outdir=str(build_dir),
+                doctreedir=str(doctree_dir),
+                buildername=builder,
+                warningiserror=False,
+                freshenv=freshenv,
+                confoverrides={
+                    "llms_txt_build_parallel": False,
+                    "llms_txt_nested_enabled": nested_enabled,
+                },
+            )
+            app.build()
+            return app
+
+        build(True, freshenv=True)
+        stale_index = build_dir / "nested" / "llms.txt"
+        assert stale_index.is_file()
+        app = build(False, freshenv=False)
+
+        assert stale_index.is_file()
+        assert get_llms_txt_index_path(app, "nested/example") == PurePosixPath(
+            "llms.txt"
+        )
+        html_path = (
+            build_dir / "nested" / "example.html"
+            if builder == "html"
+            else build_dir / "nested" / "example" / "index.html"
+        )
+        expected_href = "../llms.txt" if builder == "html" else "../../llms.txt"
+        describedby = [
+            link
+            for link in _discovery_links(html_path)
+            if link.get("rel") == "describedby"
+        ]
+        assert describedby == [{"rel": "describedby", "href": expected_href}]
+
+
+@pytest.mark.parametrize(
+    ("builder", "nested_enabled", "full_setting", "parallel"),
+    [
+        (builder, nested_enabled, full_setting, parallel)
+        for builder in ("html", "dirhtml")
+        for nested_enabled in (False, True)
+        for full_setting, parallel in ((None, False), (False, True), (True, False))
+    ],
+)
+def test_nested_and_full_build_controls_are_independent(
+    builder: str,
+    nested_enabled: bool,
+    full_setting: bool | None,
+    parallel: bool,
+) -> None:
+    """Nested generation preserves default, disabled, and enabled full output."""
+    overrides = {
+        "llms_txt_build_parallel": parallel,
+        "llms_txt_nested_enabled": nested_enabled,
+    }
+    if full_setting is not None:
+        overrides["llms_txt_full_build"] = full_setting
+    build = _build_sphinx(builder, overrides)
+    _, build_dir, _ = next(build)
+
+    full_build = full_setting is True
+    assert (build_dir / "llms.txt").is_file()
+    assert (build_dir / "llms-full.txt").is_file() is full_build
+    assert (build_dir / "nested" / "llms.txt").is_file() is nested_enabled
+    root_content = (build_dir / "llms.txt").read_text(encoding="utf-8")
+    full_entry = (
+        "- [llms-full.txt](llms-full.txt): Complete documentation in a single file."
+    )
+    assert root_content.count("## Optional") == int(full_build)
+    assert root_content.count(full_entry) == int(full_build)
+    assert "For more comprehensive documentation" not in root_content
+    if nested_enabled:
+        nested_content = (build_dir / "nested" / "llms.txt").read_text(encoding="utf-8")
+        assert "llms-full.txt" not in nested_content
+        assert "## Optional" not in nested_content
+
+    html_path = (
+        build_dir / "nested" / "example.html"
+        if builder == "html"
+        else build_dir / "nested" / "example" / "index.html"
+    )
+    expected_href = (
+        "llms.txt"
+        if nested_enabled
+        else ("../llms.txt" if builder == "html" else "../../llms.txt")
+    )
+    describedby = [
+        link for link in _discovery_links(html_path) if link.get("rel") == "describedby"
+    ]
+    assert describedby == [{"rel": "describedby", "href": expected_href}]
+
+
+@pytest.mark.parametrize(
+    ("builder", "nested_enabled", "full_build"),
+    [
+        ("html", False, True),
+        ("html", True, False),
+        ("dirhtml", False, False),
+        ("dirhtml", True, True),
+    ],
+)
+def test_custom_root_override_is_independent_of_nested_and_full_controls(
+    builder: str, nested_enabled: bool, full_build: bool
+) -> None:
+    """An authored root remains exact while nested and full outputs stay separate."""
+    build = _build_sphinx(
+        builder,
+        {
+            "llms_txt_build_parallel": False,
+            "llms_txt_full_build": full_build,
+            "llms_txt_nested_enabled": nested_enabled,
+            "llms_txt_override_source": "index",
+        },
+    )
+    _, build_dir, _ = next(build)
+
+    root_content = (build_dir / "llms.txt").read_text(encoding="utf-8")
+    assert "Welcome to sphinx-llm" in root_content
+    assert "## Pages" not in root_content
+    assert "llms-full.txt" not in root_content
+    assert (build_dir / "llms-full.txt").is_file() is full_build
+    assert (build_dir / "nested" / "llms.txt").is_file() is nested_enabled
+    if nested_enabled:
+        assert "[llms-full.txt](" not in (build_dir / "nested" / "llms.txt").read_text(
+            encoding="utf-8"
+        )
+
+    html_path = (
+        build_dir / "nested" / "example.html"
+        if builder == "html"
+        else build_dir / "nested" / "example" / "index.html"
+    )
+    expected_href = (
+        "llms.txt"
+        if nested_enabled
+        else ("../llms.txt" if builder == "html" else "../../llms.txt")
+    )
+    describedby = [
+        link for link in _discovery_links(html_path) if link.get("rel") == "describedby"
+    ]
+    assert describedby == [{"rel": "describedby", "href": expected_href}]
 
 
 @pytest.mark.parametrize("builder", ["html", "dirhtml"])
@@ -1527,12 +1834,12 @@ def test_discovery_metadata_covers_source_pages_not_auxiliary_pages(tmp_path: Pa
         "guide/index": (
             output_dir / "guide/index.html",
             "index.md",
-            "../llms.txt",
+            "llms.txt",
         ),
         "guide/page": (
             output_dir / "guide/page/index.html",
             "index.md",
-            "../../llms.txt",
+            "llms.txt",
         ),
         "excluded": (
             output_dir / "excluded/index.html",
@@ -1542,7 +1849,7 @@ def test_discovery_metadata_covers_source_pages_not_auxiliary_pages(tmp_path: Pa
         "orphan": (
             output_dir / "orphan/index.html",
             "index.md",
-            "../llms.txt",
+            "llms.txt",
         ),
     }
     for docname, (html_path, markdown_href, llms_txt_href) in pages.items():
@@ -1713,7 +2020,10 @@ def test_llms_txt_does_not_link_to_llms_full_when_disabled(sphinx_build_no_llms_
     assert "llms-full.txt" not in content
 
 
-def test_llms_txt_does_not_reference_stale_full_artifact(tmp_path: Path):
+@pytest.mark.parametrize("nested_enabled", [False, True])
+def test_llms_txt_does_not_reference_stale_full_artifact(
+    tmp_path: Path, nested_enabled: bool
+):
     """Only a full artifact generated by the current build may be listed."""
     docs_source_dir = Path(__file__).parent.parent.parent.parent / "docs" / "source"
     build_dir = tmp_path / "build"
@@ -1733,12 +2043,17 @@ def test_llms_txt_does_not_reference_stale_full_artifact(tmp_path: Path):
             confoverrides={
                 "llms_txt_build_parallel": False,
                 "llms_txt_full_build": True,
+                "llms_txt_nested_enabled": nested_enabled,
             },
         )
         app.build()
 
     assert stale_full.read_text(encoding="utf-8") == "stale output\n"
     assert "llms-full.txt" not in (build_dir / "llms.txt").read_text(encoding="utf-8")
+    nested_index = build_dir / "nested" / "llms.txt"
+    assert nested_index.is_file() is nested_enabled
+    if nested_enabled:
+        assert "llms-full.txt" not in nested_index.read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

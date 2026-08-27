@@ -162,6 +162,7 @@ Supported `conf.py` configuration options for `sphinx_llm.txt`.
 | **Name** | **Description** | **Type** | **Default** |
 | --- | --- | --- | --- |
 | `llms_txt_enabled` | Enable or disable all llms.txt artefact generation. Set to `False` to skip the entire extension without removing it from `conf.py`. Use `sphinx-build -D llms_txt_enabled=0` to skip on a per-build basis. | `bool` | `True` |
+| `llms_txt_nested_enabled` | Generate scoped nested `llms.txt` files and discover the most-specific index. Set to `False` for root-only generation and discovery. | `bool` | `True` |
 | `llms_txt_description` | Override the project description set in `llms.txt` | `str` | Uses the project description from `pyproject.toml` by default |
 | `llms_txt_build_parallel` | Build markdown files in parallel to the HTML files. | `bool` | `True` |
 | `llms_txt_suffix_mode` | Markdown output mode. `"append"` publishes `.html.md` and, for non-root `dirhtml` pages, the no-trailing-slash `.md` form. `"replace"` replaces `.html` with `.md`. `"auto"` publishes both and makes append canonical. Compatibility values remain supported: `"both"` equals `"auto"`; `"file-suffix"` publishes only `.html.md`; `"url-suffix"` publishes only the previous `dirhtml` no-trailing-slash form and behaves like `"file-suffix"` for `html`. | `str` | `"auto"` |

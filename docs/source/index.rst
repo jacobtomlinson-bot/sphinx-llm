@@ -16,7 +16,7 @@ Welcome to sphinx-llm's documentation!
    test
    apples
    meta_example
-   nested/example
+   nested/index
 
 
 Indices and tables
