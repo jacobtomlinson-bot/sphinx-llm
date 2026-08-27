@@ -35,7 +35,7 @@ The [llms.txt](https://llmstxt.org/) v2 standard describes a small Markdown
 index that agents can search before fetching the relevant LLM-friendly pages.
 This extension generates that `llms.txt` index and a Markdown version of each
 page. It can also generate `llms-full.txt` as an opt-in sphinx-llm convenience,
-but that concatenated file is not part of the llms.txt v2 standard.
+but that concatenated file is optional in the llms.txt v2 standard.
 
 To use the extension add it to your `conf.py`:
 
@@ -81,16 +81,6 @@ format (`page/index.html.md`) and the URL-suffix format (`page.md`) by default:
 - `_build/dirhtml/apples/index.html.md` (file-suffix)
 - `_build/dirhtml/apples.md` (URL-suffix, matches Claude docs behavior like
   `https://platform.claude.com/docs/overview.md`)
-
-To additionally create the non-standard, concatenated `llms-full.txt` file,
-opt in from `conf.py`:
-
-```python
-llms_txt_full_build = True
-```
-
-The enabled file is also listed under `## Optional` in the generated
-`llms.txt` file.
 
 You can control which format(s) are generated using the `llms_txt_suffix_mode`
 configuration option:
