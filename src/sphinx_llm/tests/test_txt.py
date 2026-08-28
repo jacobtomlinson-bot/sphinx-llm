@@ -6,6 +6,7 @@ Tests for the sphinx_llm.txt module.
 
 from __future__ import annotations
 
+import posixpath
 import re
 import shutil
 import subprocess
@@ -79,14 +80,32 @@ def _discovery_links(path: Path) -> list[dict[str, str]]:
     return parser.links
 
 
-def _sitemap_entries(path: Path) -> dict[str, str]:
-    """Return sitemap titles and targets in source order."""
-    entries = re.findall(
+def _sitemap_section_entries(path: Path, heading: str) -> list[tuple[str, str]]:
+    """Return one sitemap section's titles and targets in source order."""
+    content = path.read_text(encoding="utf-8")
+    section = re.search(
+        rf"^## {re.escape(heading)}\n\n(?P<body>.*?)(?=^## |\Z)",
+        content,
+        re.MULTILINE | re.DOTALL,
+    )
+    assert section is not None
+    return re.findall(
         r"^- \[([^]]+)]\(([^)]+)\):",
-        path.read_text(encoding="utf-8"),
+        section.group("body"),
         re.MULTILINE,
     )
-    return dict(entries)
+
+
+def _sitemap_entries(path: Path) -> dict[str, str]:
+    """Return the page section's titles and targets in source order."""
+    content = path.read_text(encoding="utf-8")
+    headings = [
+        heading
+        for heading in ("Pages", "Pages in this subsection")
+        if f"## {heading}\n\n" in content
+    ]
+    assert len(headings) == 1
+    return dict(_sitemap_section_entries(path, headings[0]))
 
 
 def _build_sphinx(
@@ -1517,6 +1536,12 @@ def test_nested_indexes_use_existing_docs_fixture_and_canonical_targets(
 
     nested_entries = _sitemap_entries(build_dir / "nested" / "llms.txt")
     deeper_entries = _sitemap_entries(build_dir / "nested" / "deeper" / "llms.txt")
+    assert _sitemap_section_entries(build_dir / "nested" / "llms.txt", "Optional") == [
+        ("Top-level llms.txt", "../llms.txt")
+    ]
+    assert _sitemap_section_entries(
+        build_dir / "nested" / "deeper" / "llms.txt", "Optional"
+    ) == [("Top-level llms.txt", "../../llms.txt")]
     assert list(nested_entries) == ["Nested examples", "Example", "Deeper Example"]
     assert nested_entries["Nested examples"] == index_target
     assert deeper_entries == {"Deeper Example": example_target}
@@ -1561,6 +1586,38 @@ def test_nested_indexes_use_existing_docs_fixture_and_canonical_targets(
         )
 
 
+@pytest.mark.parametrize("builder", ["html", "dirhtml"])
+def test_nested_indexes_identify_subsection_and_link_top_level(builder: str) -> None:
+    """Every scoped index identifies its scope and links back to the root index."""
+    build = _build_sphinx(builder, {"llms_txt_build_parallel": False})
+    _, build_dir, _ = next(build)
+
+    root_content = (build_dir / "llms.txt").read_text(encoding="utf-8")
+    assert "## Pages\n\n" in root_content
+    assert "## Pages in this subsection" not in root_content
+    assert "[Top-level llms.txt](" not in root_content
+
+    for nested_index in build_dir.rglob("llms.txt"):
+        if nested_index == build_dir / "llms.txt":
+            continue
+        content = nested_index.read_text(encoding="utf-8")
+        relative_root = posixpath.relpath(
+            "llms.txt",
+            start=nested_index.parent.relative_to(build_dir).as_posix(),
+        )
+        assert "## Pages in this subsection\n\n" in content
+        assert content.count("## Pages in this subsection") == 1
+        assert content.count("## Optional") == 1
+        assert content.count("[Top-level llms.txt](") == 1
+        assert _sitemap_section_entries(nested_index, "Optional") == [
+            ("Top-level llms.txt", relative_root)
+        ]
+        resolved_root = (nested_index.parent / relative_root).resolve()
+        assert resolved_root == (build_dir / "llms.txt").resolve()
+        assert_file_exists_with_content(resolved_root)
+        assert "[llms-full.txt](" not in content
+
+
 @pytest.mark.parametrize(
     ("builder", "expected_target"),
     [
@@ -1576,13 +1633,21 @@ def test_nested_index_entries_honor_markdown_http_base(
         builder,
         {
             "llms_txt_build_parallel": False,
-            "markdown_http_base": "https://example.test/docs",
+            "markdown_http_base": "https://example.test/docs/",
         },
     )
     _, build_dir, _ = next(build)
 
     nested_entries = _sitemap_entries(build_dir / "nested" / "llms.txt")
     assert nested_entries["Example"] == (f"https://example.test/docs/{expected_target}")
+    for nested_index in build_dir.rglob("llms.txt"):
+        if nested_index == build_dir / "llms.txt":
+            continue
+        nested_content = nested_index.read_text(encoding="utf-8")
+        assert _sitemap_section_entries(nested_index, "Optional") == [
+            ("Top-level llms.txt", "https://example.test/docs/llms.txt")
+        ]
+        assert "https://example.test/docs//llms.txt" not in nested_content
 
 
 @pytest.mark.parametrize(
@@ -1706,9 +1771,12 @@ def test_nested_and_full_build_controls_are_independent(
     assert root_content.count(full_entry) == int(full_build)
     assert "For more comprehensive documentation" not in root_content
     if nested_enabled:
-        nested_content = (build_dir / "nested" / "llms.txt").read_text(encoding="utf-8")
+        nested_index = build_dir / "nested" / "llms.txt"
+        nested_content = nested_index.read_text(encoding="utf-8")
         assert "llms-full.txt" not in nested_content
-        assert "## Optional" not in nested_content
+        assert _sitemap_section_entries(nested_index, "Optional") == [
+            ("Top-level llms.txt", "../llms.txt")
+        ]
 
     html_path = (
         build_dir / "nested" / "example.html"
@@ -1729,10 +1797,10 @@ def test_nested_and_full_build_controls_are_independent(
 @pytest.mark.parametrize(
     ("builder", "nested_enabled", "full_build"),
     [
-        ("html", False, True),
-        ("html", True, False),
-        ("dirhtml", False, False),
-        ("dirhtml", True, True),
+        (builder, nested_enabled, full_build)
+        for builder in ("html", "dirhtml")
+        for nested_enabled in (False, True)
+        for full_build in (False, True)
     ],
 )
 def test_custom_root_override_is_independent_of_nested_and_full_controls(
@@ -1757,9 +1825,12 @@ def test_custom_root_override_is_independent_of_nested_and_full_controls(
     assert (build_dir / "llms-full.txt").is_file() is full_build
     assert (build_dir / "nested" / "llms.txt").is_file() is nested_enabled
     if nested_enabled:
-        assert "[llms-full.txt](" not in (build_dir / "nested" / "llms.txt").read_text(
-            encoding="utf-8"
-        )
+        nested_index = build_dir / "nested" / "llms.txt"
+        nested_content = nested_index.read_text(encoding="utf-8")
+        assert "[llms-full.txt](" not in nested_content
+        assert _sitemap_section_entries(nested_index, "Optional") == [
+            ("Top-level llms.txt", "../llms.txt")
+        ]
 
     html_path = (
         build_dir / "nested" / "example.html"
@@ -1775,6 +1846,41 @@ def test_custom_root_override_is_independent_of_nested_and_full_controls(
         link for link in _discovery_links(html_path) if link.get("rel") == "describedby"
     ]
     assert describedby == [{"rel": "describedby", "href": expected_href}]
+
+
+@pytest.mark.parametrize("builder", ["html", "dirhtml"])
+def test_custom_root_override_nested_link_honors_markdown_http_base(
+    builder: str,
+) -> None:
+    """A nested index links to an unmodified custom root with an absolute base."""
+    root_contents = []
+    for full_build in (False, True):
+        build = _build_sphinx(
+            builder,
+            {
+                "llms_txt_build_parallel": False,
+                "llms_txt_full_build": full_build,
+                "llms_txt_nested_enabled": True,
+                "llms_txt_override_source": "index",
+                "markdown_http_base": "https://example.test/docs/",
+            },
+        )
+        _, build_dir, _ = next(build)
+
+        root_contents.append((build_dir / "llms.txt").read_text(encoding="utf-8"))
+        for nested_index in build_dir.rglob("llms.txt"):
+            if nested_index == build_dir / "llms.txt":
+                continue
+            nested_content = nested_index.read_text(encoding="utf-8")
+            assert _sitemap_section_entries(nested_index, "Optional") == [
+                ("Top-level llms.txt", "https://example.test/docs/llms.txt")
+            ]
+            assert "https://example.test/docs//llms.txt" not in nested_content
+            assert "[llms-full.txt](" not in nested_content
+        assert (build_dir / "llms-full.txt").is_file() is full_build
+
+    assert root_contents[0] == root_contents[1]
+    assert "## Optional" not in root_contents[0]
 
 
 @pytest.mark.parametrize("builder", ["html", "dirhtml"])

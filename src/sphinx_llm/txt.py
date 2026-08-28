@@ -735,10 +735,20 @@ class MarkdownGenerator:
         index_directory = llms_txt_path.parent.relative_to(self.outdir).as_posix()
         return posixpath.relpath(relative_target, start=index_directory or ".")
 
+    def _top_level_sitemap_url(self, llms_txt_path: Path) -> str:
+        """Return the top-level index URL from a nested sitemap location."""
+        http_base = self._markdown_http_base()
+        if http_base:
+            return f"{http_base}/llms.txt"
+        index_directory = llms_txt_path.parent.relative_to(self.outdir).as_posix()
+        return posixpath.relpath("llms.txt", start=index_directory or ".")
+
     def _write_sitemap(
         self,
         llms_txt_path: Path,
         files: Iterable[Path],
+        *,
+        subsection: bool = False,
     ) -> None:
         """Write the common page listing for one Markdown sitemap."""
         llms_txt_path.parent.mkdir(parents=True, exist_ok=True)
@@ -753,12 +763,20 @@ class MarkdownGenerator:
             if hasattr(self.app.config, "copyright") and self.app.config.copyright:
                 sitemap.write(f"{self.app.config.copyright}\n\n")
 
-            sitemap.write("## Pages\n\n")
+            pages_heading = "Pages in this subsection" if subsection else "Pages"
+            sitemap.write(f"## {pages_heading}\n\n")
             for md_file in self._sorted_sitemap_files(files):
                 title = self.extract_title_from_markdown(md_file)
                 url = self._sitemap_url(md_file, llms_txt_path)
                 sitemap.write(
                     f"- [{title}]({url}): {self.get_page_description(md_file)}\n"
+                )
+            if subsection:
+                top_level_url = self._top_level_sitemap_url(llms_txt_path)
+                sitemap.write(
+                    "\n## Optional\n\n"
+                    f"- [Top-level llms.txt]({top_level_url}): "
+                    "Complete documentation index.\n"
                 )
 
     def create_sitemap(self):
@@ -801,7 +819,7 @@ class MarkdownGenerator:
                 or scope in page_directories[md_file].parents
             ]
             output_path = self.outdir.joinpath(*relative_path.parts)
-            self._write_sitemap(output_path, scoped_files)
+            self._write_sitemap(output_path, scoped_files, subsection=True)
             logger.info(f"Created nested llms.txt sitemap: {output_path}")
 
     def extract_title_from_markdown(self, md_file: Path) -> str:
