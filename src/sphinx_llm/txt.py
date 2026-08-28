@@ -497,13 +497,9 @@ class MarkdownGenerator:
                 target_docname
             )
             selected_layout = target_layout or primary_layout
-            try:
-                target_file = target_files[selected_layout]
-            except KeyError as exc:
-                raise ExtensionError(
-                    f"Document {target_docname!r} does not have the "
-                    f"{selected_layout.value!r} Markdown layout"
-                ) from exc
+            target_file = target_files.get(
+                selected_layout, target_files[primary_layout]
+            )
             relative_target = target_file.relative_to(self.outdir).as_posix()
             http_base = self._markdown_http_base()
             if http_base:

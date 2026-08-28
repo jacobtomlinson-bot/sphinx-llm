@@ -1027,6 +1027,44 @@ def test_dirhtml_links_match_published_locations(
         assert re.search(r"sphinx-llm:[0-9a-f]{32}", content) is None
 
 
+@pytest.mark.parametrize("suffix_mode", ["append", "auto"])
+def test_dirhtml_no_slash_artifact_links_to_root_canonical_target(
+    tmp_path: Path, suffix_mode: str
+):
+    source_dir = tmp_path / "source"
+    guide_dir = source_dir / "guide"
+    guide_dir.mkdir(parents=True)
+    (source_dir / "conf.py").write_text(
+        'extensions = ["sphinx_llm.txt"]\n'
+        'project = "Root link test"\n'
+        'root_doc = "index"\n'
+        "llms_txt_build_parallel = False\n"
+        f'llms_txt_suffix_mode = "{suffix_mode}"\n',
+        encoding="utf-8",
+    )
+    (source_dir / "index.rst").write_text(
+        "Index\n=====\n\n.. toctree::\n\n   guide/page\n", encoding="utf-8"
+    )
+    (guide_dir / "page.rst").write_text(
+        "Page\n====\n\nSee :doc:`Home </index>`.\n", encoding="utf-8"
+    )
+
+    output_dir = tmp_path / "output"
+    app = Sphinx(
+        srcdir=str(source_dir),
+        confdir=str(source_dir),
+        outdir=str(output_dir),
+        doctreedir=str(tmp_path / "doctrees"),
+        buildername="dirhtml",
+        warningiserror=False,
+        freshenv=True,
+    )
+    app.build()
+
+    content = (output_dir / "guide/page.md").read_text(encoding="utf-8")
+    assert "[Home](../index.html.md)" in content
+
+
 @pytest.mark.parametrize(
     "parallel",
     [
