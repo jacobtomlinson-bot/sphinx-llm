@@ -130,6 +130,7 @@ def docs_source_styling_build(request):
             buildername=builder,
             confoverrides={
                 "llms_txt_build_parallel": parallel,
+                "llms_txt_full_build": True,
                 "llms_txt_docref_style_title_prefix": "Global style",
                 "llms_txt_docref_style_visit_link_text": "Global link",
                 "llms_txt_docref_style_visit_link_class": "global-style shared",
