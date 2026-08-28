@@ -8,8 +8,8 @@ All notable changes to this project will be documented in this file.
 
 - Added llms.txt v2 discovery links to source-backed HTML pages, advertising
   each page's canonical Markdown representation and its covering `llms.txt`.
-- Added the llms.txt v2 `append` and `replace` suffix-mode terminology, plus an
-  explicitly named `legacy-url` compatibility mode.
+- Added the llms.txt v2 `append` and `replace` suffix modes. For `dirhtml`,
+  append publishes both `page.md` and `page/index.html.md`.
 
 ### Fixed
 
@@ -49,12 +49,15 @@ agents to search `llms.txt` and fetch linked pages on demand. Projects that
 still publish the concatenated convenience file must set
 `llms_txt_full_build = True` in `conf.py`.
 
-The deprecated `llms_txt_suffix_mode` values remain accepted. Replace
-`file-suffix` with `append`, `url-suffix` with `legacy-url`, and `both` with
-`auto` without changing published paths. The legacy `dirhtml` `page.md` path is
-not v2 replace mode's `page/index.md`; select `replace` only when that URL
-change is intended. `auto` keeps its existing outputs and selects append as
-the canonical target.
+The old `llms_txt_suffix_mode` values remain accepted. `both` is the same as
+`auto`. `file-suffix` still publishes only `page/index.html.md` for `dirhtml`.
+`url-suffix` still publishes only `page.md` for `dirhtml`. For `html`, both old
+suffix values keep publishing `page.html.md`.
+
+`auto` now publishes both append and replace outputs. Append is the canonical
+target, so each page still appears once in `llms.txt`, HTML discovery metadata,
+and `llms-full.txt`. The extension owns files selected by the configured mode.
+It does not delete other files when the mode changes.
 
 The deprecated `:hash:` option remains accepted for existing `docref`
 directives. Matching pre-#115 MD5 hashes and PR #115 setting-aware hashes seed

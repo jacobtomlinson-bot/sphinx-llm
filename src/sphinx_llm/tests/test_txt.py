@@ -379,7 +379,7 @@ def test_llms_txt_does_not_use_anchor_tag_as_description(sphinx_build):
         ("dirhtml", "https://example.com/docs/", "auto"),
         ("dirhtml", "https://example.com/docs/", "replace"),
         # A trailing slash on the base is optional.
-        ("dirhtml", "https://example.com/docs", "legacy-url"),
+        ("dirhtml", "https://example.com/docs", "url-suffix"),
     ]
 )
 def sphinx_build_with_http_base(
@@ -483,92 +483,54 @@ def test_dirhtml_suffix_mode_configuration(sphinx_build_with_suffix_mode_config)
 
 
 @pytest.mark.parametrize(
-    ("builder", "suffix_mode", "expected"),
+    ("builder", "suffix_mode", "docname", "expected_paths"),
     [
-        pytest.param(
-            "html",
-            "append",
-            {
-                "index": ({"append": "index.html.md"}, "append"),
-                "guide/index": ({"append": "guide/index.html.md"}, "append"),
-                "guide/page": ({"append": "guide/page.html.md"}, "append"),
-            },
-            id="html-append",
-        ),
-        pytest.param(
-            "html",
-            "replace",
-            {
-                "index": ({"replace": "index.md"}, "replace"),
-                "guide/index": ({"replace": "guide/index.md"}, "replace"),
-                "guide/page": ({"replace": "guide/page.md"}, "replace"),
-            },
-            id="html-replace",
-        ),
-        pytest.param(
+        ("html", "append", "index", ("index.html.md",)),
+        ("html", "replace", "guide/page", ("guide/page.md",)),
+        ("html", "auto", "guide/page", ("guide/page.html.md", "guide/page.md")),
+        ("html", "both", "guide/page", ("guide/page.html.md", "guide/page.md")),
+        ("html", "file-suffix", "guide/page", ("guide/page.html.md",)),
+        ("html", "url-suffix", "guide/page", ("guide/page.html.md",)),
+        ("dirhtml", "append", "index", ("index.html.md",)),
+        (
             "dirhtml",
             "append",
-            {
-                "index": ({"append": "index.html.md"}, "append"),
-                "guide/index": ({"append": "guide/index.html.md"}, "append"),
-                "guide/page": ({"append": "guide/page/index.html.md"}, "append"),
-            },
-            id="dirhtml-append",
+            "guide/index",
+            ("guide.md", "guide/index.html.md"),
         ),
-        pytest.param(
+        (
             "dirhtml",
-            "replace",
-            {
-                "index": ({"replace": "index.md"}, "replace"),
-                "guide/index": ({"replace": "guide/index.md"}, "replace"),
-                "guide/page": ({"replace": "guide/page/index.md"}, "replace"),
-            },
-            id="dirhtml-replace",
+            "append",
+            "guide/page",
+            ("guide/page.md", "guide/page/index.html.md"),
         ),
-        pytest.param(
-            "dirhtml",
-            "legacy-url",
-            {
-                "index": ({"legacy-url": "index.md"}, "legacy-url"),
-                "guide/index": ({"legacy-url": "guide.md"}, "legacy-url"),
-                "guide/page": ({"legacy-url": "guide/page.md"}, "legacy-url"),
-            },
-            id="dirhtml-legacy-url",
-        ),
-        pytest.param(
+        ("dirhtml", "replace", "index", ("index.md",)),
+        ("dirhtml", "replace", "guide/index", ("guide/index.md",)),
+        ("dirhtml", "replace", "guide/page", ("guide/page/index.md",)),
+        ("dirhtml", "auto", "index", ("index.html.md", "index.md")),
+        (
             "dirhtml",
             "auto",
-            {
-                "index": (
-                    {"append": "index.html.md", "legacy-url": "index.md"},
-                    "append",
-                ),
-                "guide/index": (
-                    {
-                        "append": "guide/index.html.md",
-                        "legacy-url": "guide.md",
-                    },
-                    "append",
-                ),
-                "guide/page": (
-                    {
-                        "append": "guide/page/index.html.md",
-                        "legacy-url": "guide/page.md",
-                    },
-                    "append",
-                ),
-            },
-            id="dirhtml-auto",
+            "guide/index",
+            ("guide.md", "guide/index.html.md", "guide/index.md"),
         ),
+        (
+            "dirhtml",
+            "both",
+            "guide/page",
+            ("guide/page.md", "guide/page/index.html.md", "guide/page/index.md"),
+        ),
+        ("dirhtml", "file-suffix", "guide/page", ("guide/page/index.html.md",)),
+        ("dirhtml", "url-suffix", "guide/page", ("guide/page.md",)),
     ],
 )
-def test_suffix_mode_path_planner_uses_v2_layouts(
+def test_suffix_mode_path_planner_transforms_docname(
     tmp_path: Path,
     builder: str,
     suffix_mode: str,
-    expected: dict[str, tuple[dict[str, str], str]],
+    docname: str,
+    expected_paths: tuple[str, ...],
 ):
-    """One resolver maps docnames to emitted and canonical Markdown targets."""
     generator = MarkdownGenerator(
         SimpleNamespace(builder=SimpleNamespace(name=builder))
     )
@@ -576,18 +538,50 @@ def test_suffix_mode_path_planner_uses_v2_layouts(
     generator.md_build_dir = tmp_path / "markdown"
     generator.suffix_mode = suffix_mode
 
-    for docname, (expected_targets, expected_canonical) in expected.items():
-        targets, canonical_layout = generator._target_paths_for_docname(docname)
-        relative_targets = {
-            layout.value: path.relative_to(generator.outdir).as_posix()
-            for layout, path in targets.items()
-        }
-
-        assert relative_targets == expected_targets
-        assert canonical_layout.value == expected_canonical
-        assert targets[canonical_layout].relative_to(generator.outdir).as_posix() in (
-            expected_targets.values()
+    targets, _ = generator._target_paths_for_docname(docname)
+    actual_paths = tuple(
+        sorted(
+            path.relative_to(generator.outdir).as_posix() for path in targets.values()
         )
+    )
+
+    assert actual_paths == tuple(sorted(expected_paths))
+
+
+@pytest.mark.parametrize(
+    ("builder", "suffix_mode", "canonical_layout"),
+    [
+        ("html", "append", "append"),
+        ("html", "replace", "replace"),
+        ("html", "auto", "append"),
+        ("html", "both", "append"),
+        ("html", "file-suffix", "append"),
+        ("html", "url-suffix", "append"),
+        ("dirhtml", "append", "append"),
+        ("dirhtml", "replace", "replace"),
+        ("dirhtml", "auto", "append"),
+        ("dirhtml", "both", "append"),
+        ("dirhtml", "file-suffix", "append"),
+        ("dirhtml", "url-suffix", "append-no-slash"),
+    ],
+)
+def test_suffix_mode_path_planner_selects_canonical_layout(
+    tmp_path: Path,
+    builder: str,
+    suffix_mode: str,
+    canonical_layout: str,
+):
+    generator = MarkdownGenerator(
+        SimpleNamespace(builder=SimpleNamespace(name=builder))
+    )
+    generator.outdir = tmp_path / "output"
+    generator.md_build_dir = tmp_path / "markdown"
+    generator.suffix_mode = suffix_mode
+
+    targets, selected_layout = generator._target_paths_for_docname("guide/page")
+
+    assert selected_layout.value == canonical_layout
+    assert targets[selected_layout].is_relative_to(generator.outdir)
 
 
 @pytest.mark.parametrize(
@@ -597,8 +591,8 @@ def test_suffix_mode_path_planner_uses_v2_layouts(
         ("html", "replace", "api/v1.0", "api/v1.0.md"),
         ("dirhtml", "append", "api/v1.0", "api/v1.0/index.html.md"),
         ("dirhtml", "replace", "api/v1.0", "api/v1.0/index.md"),
-        ("dirhtml", "legacy-url", "api/v1.0", "api/v1.0.md"),
-        ("dirhtml", "legacy-url", "api/v1.0/index", "api/v1.0.md"),
+        ("dirhtml", "url-suffix", "api/v1.0", "api/v1.0.md"),
+        ("dirhtml", "url-suffix", "api/v1.0/index", "api/v1.0.md"),
     ],
 )
 def test_suffix_mode_path_planner_preserves_dotted_docnames(
@@ -624,66 +618,127 @@ def test_suffix_mode_path_planner_preserves_dotted_docnames(
 
 
 @pytest.mark.parametrize(
-    ("builder", "suffix_mode", "expected_layouts", "canonical_layout"),
+    ("builder", "suffix_mode", "expected_paths", "canonical_paths"),
     [
-        pytest.param("html", "append", ("append",), "append", id="html-append"),
-        pytest.param("html", "replace", ("replace",), "replace", id="html-replace"),
-        pytest.param("html", "auto", ("append",), "append", id="html-auto"),
-        pytest.param("html", "both", ("append",), "append", id="html-both"),
-        pytest.param(
-            "html", "file-suffix", ("append",), "append", id="html-file-suffix"
+        (
+            "html",
+            "append",
+            ("index.html.md", "guide/index.html.md", "guide/page.html.md"),
+            ("index.html.md", "guide/index.html.md", "guide/page.html.md"),
         ),
-        pytest.param("html", "legacy-url", ("append",), "append", id="html-legacy-url"),
-        pytest.param("html", "url-suffix", ("append",), "append", id="html-url-suffix"),
-        pytest.param("dirhtml", "append", ("append",), "append", id="dirhtml-append"),
-        pytest.param(
-            "dirhtml", "replace", ("replace",), "replace", id="dirhtml-replace"
+        (
+            "html",
+            "replace",
+            ("index.md", "guide/index.md", "guide/page.md"),
+            ("index.md", "guide/index.md", "guide/page.md"),
         ),
-        pytest.param(
+        (
+            "html",
+            "auto",
+            (
+                "index.html.md",
+                "index.md",
+                "guide/index.html.md",
+                "guide/index.md",
+                "guide/page.html.md",
+                "guide/page.md",
+            ),
+            ("index.html.md", "guide/index.html.md", "guide/page.html.md"),
+        ),
+        (
+            "html",
+            "both",
+            (
+                "index.html.md",
+                "index.md",
+                "guide/index.html.md",
+                "guide/index.md",
+                "guide/page.html.md",
+                "guide/page.md",
+            ),
+            ("index.html.md", "guide/index.html.md", "guide/page.html.md"),
+        ),
+        (
+            "html",
+            "file-suffix",
+            ("index.html.md", "guide/index.html.md", "guide/page.html.md"),
+            ("index.html.md", "guide/index.html.md", "guide/page.html.md"),
+        ),
+        (
+            "html",
+            "url-suffix",
+            ("index.html.md", "guide/index.html.md", "guide/page.html.md"),
+            ("index.html.md", "guide/index.html.md", "guide/page.html.md"),
+        ),
+        (
+            "dirhtml",
+            "append",
+            (
+                "index.html.md",
+                "guide.md",
+                "guide/index.html.md",
+                "guide/page.md",
+                "guide/page/index.html.md",
+            ),
+            ("index.html.md", "guide/index.html.md", "guide/page/index.html.md"),
+        ),
+        (
+            "dirhtml",
+            "replace",
+            ("index.md", "guide/index.md", "guide/page/index.md"),
+            ("index.md", "guide/index.md", "guide/page/index.md"),
+        ),
+        (
             "dirhtml",
             "auto",
-            ("append", "legacy-url"),
-            "append",
-            id="dirhtml-auto",
+            (
+                "index.html.md",
+                "index.md",
+                "guide.md",
+                "guide/index.html.md",
+                "guide/index.md",
+                "guide/page.md",
+                "guide/page/index.html.md",
+                "guide/page/index.md",
+            ),
+            ("index.html.md", "guide/index.html.md", "guide/page/index.html.md"),
         ),
-        pytest.param(
+        (
             "dirhtml",
             "both",
-            ("append", "legacy-url"),
-            "append",
-            id="dirhtml-both",
+            (
+                "index.html.md",
+                "index.md",
+                "guide.md",
+                "guide/index.html.md",
+                "guide/index.md",
+                "guide/page.md",
+                "guide/page/index.html.md",
+                "guide/page/index.md",
+            ),
+            ("index.html.md", "guide/index.html.md", "guide/page/index.html.md"),
         ),
-        pytest.param(
+        (
             "dirhtml",
             "file-suffix",
-            ("append",),
-            "append",
-            id="dirhtml-file-suffix",
+            ("index.html.md", "guide/index.html.md", "guide/page/index.html.md"),
+            ("index.html.md", "guide/index.html.md", "guide/page/index.html.md"),
         ),
-        pytest.param(
-            "dirhtml",
-            "legacy-url",
-            ("legacy-url",),
-            "legacy-url",
-            id="dirhtml-legacy-url",
-        ),
-        pytest.param(
+        (
             "dirhtml",
             "url-suffix",
-            ("legacy-url",),
-            "legacy-url",
-            id="dirhtml-url-suffix",
+            ("index.md", "guide.md", "guide/page.md"),
+            ("index.md", "guide.md", "guide/page.md"),
         ),
     ],
 )
-def test_supported_suffix_modes_publish_canonical_nested_targets(
+def test_suffix_mode_build_publishes_exact_artifacts_and_one_entry_per_page(
     tmp_path: Path,
     builder: str,
     suffix_mode: str,
-    expected_layouts: tuple[str, ...],
-    canonical_layout: str,
+    expected_paths: tuple[str, ...],
+    canonical_paths: tuple[str, ...],
 ):
-    """Every mode publishes exact paths and selects one existing canonical target."""
     source_dir = tmp_path / "source"
     guide_dir = source_dir / "guide"
     guide_dir.mkdir(parents=True)
@@ -692,6 +747,7 @@ def test_supported_suffix_modes_publish_canonical_nested_targets(
         'project = "Suffix matrix"\n'
         'root_doc = "index"\n'
         "llms_txt_build_parallel = False\n"
+        "llms_txt_full_build = True\n"
         f'llms_txt_suffix_mode = "{suffix_mode}"\n',
         encoding="utf-8",
     )
@@ -717,48 +773,25 @@ def test_supported_suffix_modes_publish_canonical_nested_targets(
     )
     app.build()
 
-    published_paths = {
-        "html": {
-            "append": {
-                "index.html.md",
-                "guide/index.html.md",
-                "guide/page.html.md",
-            },
-            "replace": {"index.md", "guide/index.md", "guide/page.md"},
-        },
-        "dirhtml": {
-            "append": {
-                "index.html.md",
-                "guide/index.html.md",
-                "guide/page/index.html.md",
-            },
-            "replace": {"index.md", "guide/index.md", "guide/page/index.md"},
-            "legacy-url": {"index.md", "guide.md", "guide/page.md"},
-        },
+    actual_paths = {
+        path.relative_to(output_dir).as_posix() for path in output_dir.rglob("*.md")
     }
-    builder_paths = published_paths[builder]
-    expected_paths = set().union(
-        *(builder_paths[layout] for layout in expected_layouts)
-    )
-    all_paths = set().union(*builder_paths.values())
-    for relative_path in all_paths:
-        assert (output_dir / relative_path).is_file() == (
-            relative_path in expected_paths
-        ), relative_path
+    assert actual_paths == set(expected_paths)
 
-    canonical_paths = builder_paths[canonical_layout]
     sitemap = (output_dir / "llms.txt").read_text(encoding="utf-8")
-    sitemap_paths = {
+    sitemap_paths = tuple(
         match.group(1)
         for line in sitemap.splitlines()
         if (match := re.match(r"^- \[[^]]+\]\(([^)]+)\):", line))
-    }
+        and match.group(1) != "llms-full.txt"
+    )
     assert sitemap_paths == canonical_paths
+    assert len(sitemap_paths) == 3
 
     llms_full = (output_dir / "llms-full.txt").read_text(encoding="utf-8")
     for relative_path in canonical_paths:
         assert f"# {relative_path}\n" in llms_full
-    for relative_path in all_paths - canonical_paths:
+    for relative_path in set(expected_paths) - set(canonical_paths):
         assert f"# {relative_path}\n" not in llms_full
 
 
@@ -766,7 +799,7 @@ def test_suffix_modes_preserve_unowned_output_files(tmp_path: Path):
     """Candidate paths not owned by sphinx-llm are never removed."""
     source_dir = tmp_path / "source"
     guide_dir = source_dir / "guide"
-    extra_dir = source_dir / "extra" / "guide"
+    extra_dir = source_dir / "extra" / "guide" / "page"
     guide_dir.mkdir(parents=True)
     extra_dir.mkdir(parents=True)
     (source_dir / "conf.py").write_text(
@@ -782,8 +815,8 @@ def test_suffix_modes_preserve_unowned_output_files(tmp_path: Path):
         "Index\n=====\n\n.. toctree::\n\n   guide/page\n", encoding="utf-8"
     )
     (guide_dir / "page.rst").write_text("Page\n====\n", encoding="utf-8")
-    sentinel = "User-supplied legacy-looking asset\n"
-    (extra_dir / "page.md").write_text(sentinel, encoding="utf-8")
+    sentinel = "User-supplied suffix-like asset\n"
+    (extra_dir / "index.md").write_text(sentinel, encoding="utf-8")
     output_dir = tmp_path / "output"
     app = Sphinx(
         srcdir=str(source_dir),
@@ -796,8 +829,50 @@ def test_suffix_modes_preserve_unowned_output_files(tmp_path: Path):
     )
     app.build()
 
+    assert (output_dir / "guide/page.md").is_file()
     assert (output_dir / "guide/page/index.html.md").is_file()
-    assert (output_dir / "guide/page.md").read_text(encoding="utf-8") == sentinel
+    assert (output_dir / "guide/page/index.md").read_text(encoding="utf-8") == sentinel
+
+
+def test_selected_markdown_output_paths_are_extension_owned(tmp_path: Path):
+    """Generated Markdown replaces an extra asset at a selected output path."""
+    source_dir = tmp_path / "source"
+    extra_dir = source_dir / "extra" / "guide"
+    extra_dir.mkdir(parents=True)
+    (source_dir / "conf.py").write_text(
+        'extensions = ["sphinx_llm.txt"]\n'
+        'project = "Selected output"\n'
+        'root_doc = "index"\n'
+        "llms_txt_build_parallel = False\n"
+        'llms_txt_suffix_mode = "append"\n'
+        'html_extra_path = ["extra"]\n',
+        encoding="utf-8",
+    )
+    (source_dir / "index.rst").write_text(
+        "Index\n=====\n\n.. toctree::\n\n   guide/page\n", encoding="utf-8"
+    )
+    (source_dir / "guide").mkdir()
+    (source_dir / "guide/page.rst").write_text(
+        "Generated page\n==============\n", encoding="utf-8"
+    )
+    sentinel = "User-supplied selected-path asset\n"
+    (extra_dir / "page.md").write_text(sentinel, encoding="utf-8")
+    output_dir = tmp_path / "output"
+
+    app = Sphinx(
+        srcdir=str(source_dir),
+        confdir=str(source_dir),
+        outdir=str(output_dir),
+        doctreedir=str(tmp_path / "doctrees"),
+        buildername="dirhtml",
+        warningiserror=False,
+        freshenv=True,
+    )
+    app.build()
+
+    generated = (output_dir / "guide/page.md").read_text(encoding="utf-8")
+    assert generated != sentinel
+    assert "# Generated page" in generated
 
 
 @pytest.mark.parametrize(
@@ -805,7 +880,6 @@ def test_suffix_modes_preserve_unowned_output_files(tmp_path: Path):
     [
         "append",
         "replace",
-        "legacy-url",
         "auto",
         "file-suffix",
         "url-suffix",
@@ -815,7 +889,7 @@ def test_suffix_modes_preserve_unowned_output_files(tmp_path: Path):
 def test_dirhtml_rejects_colliding_published_markdown_targets(
     tmp_path: Path, suffix_mode: str
 ):
-    """Legacy URL layouts cannot silently overwrite another document."""
+    """Published layouts cannot silently overwrite another document."""
     generator = MarkdownGenerator(
         SimpleNamespace(
             builder=SimpleNamespace(name="dirhtml"),
@@ -843,7 +917,10 @@ def test_dirhtml_rejects_colliding_published_markdown_targets(
     [
         pytest.param(
             "append",
-            {"guide/page/index.html.md": "../target/index.html.md"},
+            {
+                "guide/page.md": "target.md",
+                "guide/page/index.html.md": "../target/index.html.md",
+            },
             "guide/page/index.html.md",
             "guide/target/index.html.md",
             id="append",
@@ -856,17 +933,18 @@ def test_dirhtml_rejects_colliding_published_markdown_targets(
             id="replace",
         ),
         pytest.param(
-            "legacy-url",
+            "url-suffix",
             {"guide/page.md": "target.md"},
             "guide/page.md",
             "guide/target.md",
-            id="legacy-url",
+            id="url-suffix",
         ),
         pytest.param(
             "auto",
             {
                 "guide/page/index.html.md": "../target/index.html.md",
                 "guide/page.md": "target.md",
+                "guide/page/index.md": "../target/index.md",
             },
             "guide/page/index.html.md",
             "guide/target/index.html.md",
@@ -969,7 +1047,7 @@ def test_dirhtml_links_match_published_locations(
             "html",
             "index.rst",
             None,
-            ("index.html.md", "test.html.md"),
+            ("index.html.md", "index.md", "test.html.md", "test.md"),
             "test.html.md",
             id="html",
         ),
@@ -985,7 +1063,13 @@ def test_dirhtml_links_match_published_locations(
             "dirhtml",
             "index",
             "auto",
-            ("index.html.md", "index.md", "test/index.html.md", "test.md"),
+            (
+                "index.html.md",
+                "index.md",
+                "test.md",
+                "test/index.html.md",
+                "test/index.md",
+            ),
             "test/index.html.md",
             id="dirhtml-auto",
         ),
@@ -993,7 +1077,7 @@ def test_dirhtml_links_match_published_locations(
             "dirhtml",
             "index",
             "append",
-            ("index.html.md", "test/index.html.md"),
+            ("index.html.md", "test.md", "test/index.html.md"),
             "test/index.html.md",
             id="dirhtml-append",
         ),
@@ -1001,7 +1085,13 @@ def test_dirhtml_links_match_published_locations(
             "dirhtml",
             "index",
             "both",
-            ("index.html.md", "index.md", "test/index.html.md", "test.md"),
+            (
+                "index.html.md",
+                "index.md",
+                "test.md",
+                "test/index.html.md",
+                "test/index.md",
+            ),
             "test/index.html.md",
             id="dirhtml-both",
         ),
@@ -1020,14 +1110,6 @@ def test_dirhtml_links_match_published_locations(
             ("index.md", "test.md"),
             "test.md",
             id="dirhtml-url-suffix",
-        ),
-        pytest.param(
-            "dirhtml",
-            "index",
-            "legacy-url",
-            ("index.md", "test.md"),
-            "test.md",
-            id="dirhtml-legacy-url",
         ),
         pytest.param(
             "dirhtml",
@@ -1147,10 +1229,11 @@ def test_replace_suffix_mode(sphinx_build_with_suffix_mode_config):
         )
 
 
-def test_invalid_suffix_mode_raises_error():
+@pytest.mark.parametrize("suffix_mode", ["invalid-mode", "legacy-url"])
+def test_invalid_suffix_mode_raises_error(suffix_mode: str):
     """Test that invalid llms_txt_suffix_mode values raise an error."""
     with pytest.raises(ExtensionError, match="Invalid llms_txt_suffix_mode"):
-        list(_build_sphinx("dirhtml", {"llms_txt_suffix_mode": "invalid-mode"}))
+        list(_build_sphinx("dirhtml", {"llms_txt_suffix_mode": suffix_mode}))
 
 
 @pytest.mark.parametrize("exclude_patterns", [None, "apples", ["**", None], [1]])
@@ -1226,14 +1309,6 @@ def test_llms_txt_disabled(builder):
             id="html-replace-sequential",
         ),
         pytest.param(
-            "html",
-            "legacy-url",
-            True,
-            "index.html.md",
-            "example.html.md",
-            id="html-legacy-url",
-        ),
-        pytest.param(
             "dirhtml",
             "auto",
             True,
@@ -1272,14 +1347,6 @@ def test_llms_txt_disabled(builder):
             "index.md",
             "../example.md",
             id="dirhtml-url-suffix",
-        ),
-        pytest.param(
-            "dirhtml",
-            "legacy-url",
-            True,
-            "index.md",
-            "../example.md",
-            id="dirhtml-legacy-url",
         ),
         pytest.param(
             "dirhtml",

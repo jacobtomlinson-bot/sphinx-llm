@@ -66,17 +66,18 @@ class MarkdownLayout(str, Enum):
     """Published Markdown path layout."""
 
     APPEND = "append"
-    LEGACY_URL = "legacy-url"
+    APPEND_NO_SLASH = "append-no-slash"
     REPLACE = "replace"
 
 
-SUFFIX_MODE_ALIASES = {
+SUFFIX_MODE_ALIASES = {"both": "auto"}
+SUFFIX_MODES = ("auto", "append", "replace", "file-suffix", "url-suffix")
+SUPPORTED_SUFFIX_MODES = (*SUFFIX_MODES, *SUFFIX_MODE_ALIASES)
+DEPRECATED_SUFFIX_MODES = {
     "both": "auto",
     "file-suffix": "append",
-    "url-suffix": "legacy-url",
+    "url-suffix": "append",
 }
-SUFFIX_MODES = ("auto", "append", "replace", "legacy-url")
-SUPPORTED_SUFFIX_MODES = (*SUFFIX_MODES, *SUFFIX_MODE_ALIASES)
 
 
 def normalize_suffix_mode(suffix_mode: str) -> str:
@@ -104,40 +105,47 @@ def resolve_markdown_targets(
     if builder_name == "dirhtml":
         if doc_path == Path("index"):
             html_target = outdir / "index.html"
-            legacy_url_target = outdir / "index.md"
+            append_no_slash_target = outdir / "index.md"
+            has_no_slash_url = False
         elif doc_path.name == "index":
             html_target = outdir / doc_path.parent / "index.html"
-            legacy_url_target = (
+            append_no_slash_target = (
                 outdir / doc_path.parent.parent / f"{doc_path.parent.name}.md"
             )
+            has_no_slash_url = True
         else:
             html_target = outdir / doc_path / "index.html"
-            legacy_url_target = outdir / doc_path.parent / f"{doc_path.name}.md"
+            append_no_slash_target = outdir / doc_path.parent / f"{doc_path.name}.md"
+            has_no_slash_url = True
     else:
         html_target = outdir / doc_path.parent / f"{doc_path.name}.html"
-        # url-suffix historically had no special behavior for html builds.
-        legacy_url_target = Path(f"{html_target}.md")
+        append_no_slash_target = Path(f"{html_target}.md")
+        has_no_slash_url = False
 
     append_target = Path(f"{html_target}.md")
     replace_target = html_target.with_suffix(".md")
 
     if effective_mode == "replace":
         return {MarkdownLayout.REPLACE: replace_target}, MarkdownLayout.REPLACE
-    if effective_mode == "append" or builder_name != "dirhtml":
+    if effective_mode == "file-suffix":
         return {MarkdownLayout.APPEND: append_target}, MarkdownLayout.APPEND
-    if effective_mode == "legacy-url":
+    if effective_mode == "url-suffix":
+        if builder_name != "dirhtml":
+            return {MarkdownLayout.APPEND: append_target}, MarkdownLayout.APPEND
         return (
-            {MarkdownLayout.LEGACY_URL: legacy_url_target},
-            MarkdownLayout.LEGACY_URL,
+            {MarkdownLayout.APPEND_NO_SLASH: append_no_slash_target},
+            MarkdownLayout.APPEND_NO_SLASH,
         )
+    targets = {MarkdownLayout.APPEND: append_target}
+    if effective_mode == "append":
+        if has_no_slash_url:
+            targets[MarkdownLayout.APPEND_NO_SLASH] = append_no_slash_target
+        return targets, MarkdownLayout.APPEND
     if effective_mode == "auto":
-        return (
-            {
-                MarkdownLayout.APPEND: append_target,
-                MarkdownLayout.LEGACY_URL: legacy_url_target,
-            },
-            MarkdownLayout.APPEND,
-        )
+        if has_no_slash_url:
+            targets[MarkdownLayout.APPEND_NO_SLASH] = append_no_slash_target
+        targets[MarkdownLayout.REPLACE] = replace_target
+        return targets, MarkdownLayout.APPEND
     raise AssertionError(f"Unhandled normalized suffix mode: {effective_mode!r}")
 
 
@@ -206,11 +214,11 @@ class MarkdownGenerator:
             self.app.config, "llms_txt_suffix_mode", "auto"
         )
         self.suffix_mode = normalize_suffix_mode(configured_suffix_mode)
-        if configured_suffix_mode in SUFFIX_MODE_ALIASES:
+        if configured_suffix_mode in DEPRECATED_SUFFIX_MODES:
             logger.info(
                 "llms_txt_suffix_mode=%r is deprecated; use %r instead",
                 configured_suffix_mode,
-                self.suffix_mode,
+                DEPRECATED_SUFFIX_MODES[configured_suffix_mode],
             )
 
         if app.builder and app.builder.name == "markdown":
