@@ -1485,3 +1485,76 @@ def test_tags_forwarded_to_markdown_build():
             "Content behind a tag of the primary build is missing from the "
             "markdown output; tags were not forwarded to the sub-build"
         )
+
+
+@pytest.mark.parametrize("parallel", [True, False])
+def test_config_overrides_forwarded_to_markdown_build(parallel):
+    """Configuration overrides from the primary build must be forwarded to
+    the markdown sub-build in both parallel and sequential modes."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        srcdir = temp_path / "source"
+        build_dir = temp_path / "build"
+        doctree_dir = temp_path / "doctrees"
+
+        srcdir.mkdir()
+        (srcdir / "conf.py").write_text(
+            "import json\n"
+            "from pathlib import Path\n"
+            "\n"
+            'extensions = ["sphinx_llm.txt"]\n'
+            'project = "Override probe"\n'
+            "\n"
+            "def capture(app):\n"
+            "    Path(app.srcdir).parent.joinpath(\n"
+            '        app.builder.name + ".txt"\n'
+            "    ).write_text(json.dumps({\n"
+            '        "argument": app.config.probe_argument,\n'
+            '        "count": app.config.probe_count,\n'
+            '        "empty": app.config.probe_empty,\n'
+            '        "execution_mode": app.config.probe_execution_mode,\n'
+            '        "feature_enabled": app.config.probe_feature_enabled,\n'
+            '        "items": app.config.probe_items,\n'
+            "    }, sort_keys=True))\n"
+            "\n"
+            "def setup(app):\n"
+            '    app.add_config_value("probe_argument", "default", "env")\n'
+            '    app.add_config_value("probe_count", 1, "env")\n'
+            '    app.add_config_value("probe_empty", "default", "env")\n'
+            '    app.add_config_value("probe_execution_mode", "auto", "env")\n'
+            '    app.add_config_value("probe_feature_enabled", True, "env")\n'
+            '    app.add_config_value("probe_items", ["default"], "env")\n'
+            '    app.connect("builder-inited", capture)\n'
+        )
+        (srcdir / "index.rst").write_text("Test\n====\n")
+
+        overrides = {
+            "llms_txt_build_parallel": parallel,
+            "probe_argument": "value with spaces=preserved",
+            "probe_count": 7,
+            "probe_empty": "",
+            "probe_execution_mode": "off",
+            "probe_feature_enabled": "0",
+            "probe_items": "first,second value",
+        }
+        app = Sphinx(
+            srcdir=str(srcdir),
+            confdir=str(srcdir),
+            outdir=str(build_dir),
+            doctreedir=str(doctree_dir),
+            buildername="html",
+            warningiserror=False,
+            freshenv=True,
+            confoverrides=overrides,
+        )
+        app.build()
+
+        expected = (
+            '{"argument": "value with spaces=preserved", "count": 7, '
+            '"empty": "", '
+            '"execution_mode": "off", "feature_enabled": false, '
+            '"items": ["first", "second value"]}'
+        )
+        assert app.config.overrides == overrides
+        assert (temp_path / "html.txt").read_text() == expected
+        assert (temp_path / "llms-markdown.txt").read_text() == expected
