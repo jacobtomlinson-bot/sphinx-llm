@@ -280,6 +280,30 @@ def test_build_markdown_files_skips_failed_primary_build(sphinx_build):
     popen.assert_not_called()
 
 
+def test_boolean_config_overrides_use_sphinx_cli_values(tmp_path):
+    """Boolean overrides must use Sphinx's ``1`` and ``0`` CLI syntax."""
+    app = SimpleNamespace(
+        config=SimpleNamespace(overrides={"probe_true": True, "probe_false": False}),
+        confdir=tmp_path / "conf",
+        srcdir=tmp_path / "source",
+        doctreedir=tmp_path / "doctrees",
+        tags=(),
+    )
+    generator = MarkdownGenerator(app)
+    generator.md_build_dir = tmp_path / "markdown"
+    generator.parallel = True
+
+    with (tmp_path / "markdown.log").open("w") as logfile:
+        with (
+            patch("sphinx_llm.txt.tempfile.NamedTemporaryFile", return_value=logfile),
+            patch("sphinx_llm.txt.subprocess.Popen") as popen,
+        ):
+            generator.build_markdown_files()
+
+    command = popen.call_args.args[0]
+    assert command[-4:] == ["-D", "probe_true=1", "-D", "probe_false=0"]
+
+
 def test_rst_files_have_corresponding_output_files(sphinx_build):
     """Test that all RST files have corresponding HTML and HTML.MD files in output."""
     app, build_dir, source_dir = sphinx_build
