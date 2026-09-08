@@ -8,6 +8,8 @@ All notable changes to this project will be documented in this file.
 
 - Added llms.txt v2 discovery links to source-backed HTML pages, advertising
   each page's canonical Markdown representation and its covering `llms.txt`.
+- Added the llms.txt v2 `append` and `replace` suffix modes. For `dirhtml`,
+  append publishes both `page.md` and `page/index.html.md`.
 
 ### Fixed
 
@@ -15,6 +17,8 @@ All notable changes to this project will be documented in this file.
   dynamic builder-derived tags such as `html`) to the markdown sub-build so
   that conditional content (e.g. `.. only::` directives) renders the same in
   the markdown output as in the HTML build.
+- Made sitemap, discovery, `llms-full.txt`, and generated Markdown links share
+  one canonical path resolver and reject colliding published paths.
 
 ### Changed
 
@@ -44,6 +48,16 @@ All notable changes to this project will be documented in this file.
 agents to search `llms.txt` and fetch linked pages on demand. Projects that
 still publish the concatenated convenience file must set
 `llms_txt_full_build = True` in `conf.py`.
+
+The old `llms_txt_suffix_mode` values remain accepted. `both` is the same as
+`auto`. `file-suffix` still publishes only `page/index.html.md` for `dirhtml`.
+`url-suffix` still publishes only `page.md` for `dirhtml`. For `html`, both old
+suffix values keep publishing `page.html.md`.
+
+`auto` now publishes both append and replace outputs. Append is the canonical
+target, so each page still appears once in `llms.txt`, HTML discovery metadata,
+and `llms-full.txt`. The extension owns files selected by the configured mode.
+It does not delete other files when the mode changes.
 
 The deprecated `:hash:` option remains accepted for existing `docref`
 directives. Matching pre-#115 MD5 hashes and PR #115 setting-aware hashes seed

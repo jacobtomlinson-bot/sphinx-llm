@@ -35,7 +35,9 @@ The [llms.txt](https://llmstxt.org/) v2 standard describes a small Markdown
 index that agents can search before fetching the relevant LLM-friendly pages.
 This extension generates that `llms.txt` index and a Markdown version of each
 page. It can also generate `llms-full.txt` as an opt-in sphinx-llm convenience,
-but that concatenated file is optional in the llms.txt v2 standard.
+but that concatenated file is optional in the llms.txt v2 standard. Each page
+can publish Markdown by appending `.md` to its HTML URL or by replacing the
+final `.html` extension with `.md`.
 
 To use the extension add it to your `conf.py`:
 
@@ -55,13 +57,12 @@ extension will:
 2. Automatically run an additional build with the
    [markdown builder](https://pypi.org/project/sphinx-markdown-builder/)
 3. Merge the build outputs together
-   - The Markdown files will have the same name as the HTML output plus an extra
-     `.md` extension
+   - Markdown paths follow the configured append or replace layout
 4. Generate an index file for all the markdown files named `llms.txt`
 5. Optionally concatenate all generated markdown into a single `llms-full.txt`
    file when `llms_txt_full_build = True`
 
-For example, if your build with the `html` builder generates:
+For example, in the default `auto` mode, if your `html` builder generates:
 
 - `_build/html/index.html`
 - `_build/html/apples.html`
@@ -70,30 +71,61 @@ The extension will also create:
 
 - `_build/html/llms.txt`
 - `_build/html/index.html.md`
+- `_build/html/index.md`
 - `_build/html/apples.html.md`
+- `_build/html/apples.md`
 
-With the `dirhtml` builder, which creates URLs like `/apples/` instead of
-`/apples.html`, the extension generates markdown files in both the file-suffix
-format (`page/index.html.md`) and the URL-suffix format (`page.md`) by default:
+llms.txt v2 names the two standard layouts after how they transform the HTML
+URL:
+
+- **append** adds `.md`. For the `html` builder, `page.html` becomes
+  `page.html.md`. A `dirhtml` page is available both with and without a trailing
+  slash, so append publishes both `page/index.html.md` and `page.md`.
+- **replace** replaces `.html` with `.md`: `page.html` becomes `page.md`, while
+  a `dirhtml` URL such as `page/` becomes `page/index.md`.
+
+The default `auto` mode publishes both append and replace outputs. For a
+`dirhtml` build it creates:
 
 - `_build/dirhtml/llms.txt`
 - `_build/dirhtml/index.html.md`
-- `_build/dirhtml/apples/index.html.md` (file-suffix)
-- `_build/dirhtml/apples.md` (URL-suffix, matches Claude docs behavior like
-  `https://platform.claude.com/docs/overview.md`)
+- `_build/dirhtml/index.md`
+- `_build/dirhtml/apples.md`
+- `_build/dirhtml/apples/index.html.md`
+- `_build/dirhtml/apples/index.md`
 
 You can control which format(s) are generated using the `llms_txt_suffix_mode`
 configuration option:
 
-- `"auto"` (default): For `dirhtml`, generates both file-suffix and URL-suffix
-  formats; for `html`, generates the standard `.html.md` format
-- `"file-suffix"`: For `dirhtml`, only generates `page/index.html.md`; for
-  `html`, generates the standard `.html.md` format
-- `"url-suffix"`: For `dirhtml`, only generates `page.md`; for `html`,
-  generates the standard `.html.md` format
-- `"replace"`: Replaces the `.html` extension with `.md` in the HTML output
-  path. For `html` builder: `page.html` → `page.md`. For `dirhtml` builder:
-  `page/index.html` → `page/index.md`
+- `"append"`: Publishes the append output. For `dirhtml`, it publishes both
+  `page.md` and `page/index.html.md`.
+- `"replace"`: Publishes `page.md` for `html` or `page/index.md` for `dirhtml`.
+- `"auto"` (default): Publishes the union of append and replace outputs.
+
+Existing values remain supported for compatibility:
+
+- `"both"` is an exact alias for `"auto"`.
+- `"file-suffix"` keeps its previous single output: `page.html.md` for `html`
+  or `page/index.html.md` for `dirhtml`.
+- `"url-suffix"` keeps its previous single output: `page.html.md` for `html`
+  or the no-trailing-slash `page.md` form for `dirhtml`.
+
+The two `dirhtml` forms `guide/page.md` and `guide/page/index.md` are different.
+The first appends `.md` to the URL without a trailing slash. The second replaces
+the `index.html` implied by the trailing slash. A nested index document follows
+the same rule: append publishes `guide.md` and `guide/index.html.md`, while
+replace publishes `guide/index.md`.
+
+Each document has one canonical representation. Append and auto select the
+`.html.md` output. Replace selects the `.md` output that replaces `.html`.
+The compatibility modes select their only output. `llms.txt`, `llms-full.txt`,
+generated Markdown links, and HTML discovery metadata all use this same target,
+so extra physical outputs never create duplicate entries. Links inside each
+physical output use that output's layout.
+
+Generated paths selected by the configured mode are reserved for sphinx-llm and
+are overwritten during a build. Other existing files are left unchanged; the
+extension never guesses that an unselected file is stale or deletes it.
 
 > [!NOTE]
 > This extension only works with HTML builders (like `html` and `dirhtml`).
@@ -109,12 +141,11 @@ these elements to the HTML document's head:
 <link rel="describedby" href="llms.txt">
 ```
 
-The alternate link follows the canonical output selected by the effective
-`llms_txt_suffix_mode`. For example, an `html` page at `guide/page.html` links
-to `page.html.md` normally or `page.md` in `replace` mode. A `dirhtml` page at
-`guide/page/` links to `index.html.md` normally or `index.md` in `replace`
-mode. Modes that publish multiple representations still advertise exactly one
-canonical representation.
+The alternate link follows the same canonical output selected for `llms.txt`.
+For example, an `html` page at `guide/page.html` links to `page.html.md` in
+append mode or `page.md` in replace mode. A `dirhtml` page at `guide/page/`
+links to `index.html.md` in append or auto mode and `index.md` in replace mode.
+The `url-suffix` compatibility mode links to `../page.md`.
 
 Both links are relative to the published HTML URL, so they continue to work
 when the output is hosted below a site subpath. The `describedby` link currently
@@ -133,7 +164,7 @@ Supported `conf.py` configuration options for `sphinx_llm.txt`.
 | `llms_txt_enabled` | Enable or disable all llms.txt artefact generation. Set to `False` to skip the entire extension without removing it from `conf.py`. Use `sphinx-build -D llms_txt_enabled=0` to skip on a per-build basis. | `bool` | `True` |
 | `llms_txt_description` | Override the project description set in `llms.txt` | `str` | Uses the project description from `pyproject.toml` by default |
 | `llms_txt_build_parallel` | Build markdown files in parallel to the HTML files. | `bool` | `True` |
-| `llms_txt_suffix_mode` | Suffix mode for generated markdown files. Options: `"auto"` (default behavior for each builder), `"file-suffix"` (spec-compliant format), `"url-suffix"` (URL-style format), or `"replace"` (replaces `.html` with `.md`). Note: `"both"` is deprecated but still supported (treated as `"auto"`). | `str` | `"auto"` |
+| `llms_txt_suffix_mode` | Markdown output mode. `"append"` publishes `.html.md` and, for non-root `dirhtml` pages, the no-trailing-slash `.md` form. `"replace"` replaces `.html` with `.md`. `"auto"` publishes both and makes append canonical. Compatibility values remain supported: `"both"` equals `"auto"`; `"file-suffix"` publishes only `.html.md`; `"url-suffix"` publishes only the previous `dirhtml` no-trailing-slash form and behaves like `"file-suffix"` for `html`. | `str` | `"auto"` |
 | `llms_txt_full_build` | Generate the optional, non-standard `llms-full.txt` convenience file and list it in generated `llms.txt` output. Set to `True` to opt in. | `bool` | `False` |
 | `llms_txt_exclude` | A list of Sphinx wildcard patterns matched against document names (not regular expressions or source paths) to exclude from `llms.txt` and `llms-full.txt`. `*` does not cross `/`, while `**` does; for example, `"reference/generated/**"`. The individual markdown files for excluded documents are still generated. | `list[str]` | `[]` |
 | `llms_txt_override_source` | Advanced option that overrides the automatically generated `llms.txt` sitemap with the rendered contents of a custom Sphinx source document. Specify a docname or source path relative to the source directory, such as `"llms-txt"` or `"llms-txt.rst"`. | `str` | `""` |
