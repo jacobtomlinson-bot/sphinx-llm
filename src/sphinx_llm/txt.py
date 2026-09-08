@@ -269,6 +269,14 @@ class MarkdownGenerator:
             for tag in self.app.tags:
                 sphinx_build_cmd += ["-t", tag]
 
+            # Preserve command-line configuration overrides from the primary
+            # build. Without forwarding these, the markdown sub-build reloads
+            # conf.py defaults and can behave differently from the HTML build.
+            for name, value in self.app.config.overrides.items():
+                if isinstance(value, bool):
+                    value = "1" if value else "0"
+                sphinx_build_cmd += ["-D", f"{name}={value}"]
+
             # When building sequentially we can reuse the doctree directory from the primary build
             # but in parallel builds these may clobber each other so we need to use a separate one
             if not self.parallel:

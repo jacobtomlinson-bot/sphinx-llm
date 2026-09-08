@@ -5,8 +5,10 @@
 import json
 import sys
 import traceback
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import import_module
 from pathlib import Path
+from threading import Thread
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -22,6 +24,53 @@ from sphinx_llm.tests.test_txt import (
     _get_html_meta_description,
 )
 from sphinx_llm.txt import MarkdownGenerator
+
+
+@pytest.fixture
+def summary_server():
+    """Serve deterministic chat completions to parent and subprocess builds."""
+    requests = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            content_length = int(self.headers["Content-Length"])
+            requests.append(json.loads(self.rfile.read(content_length)))
+            response = json.dumps(
+                {
+                    "id": "test-completion",
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": "test-model",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {
+                                "role": "assistant",
+                                "content": "Generated page summary.",
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                }
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response)))
+            self.end_headers()
+            self.wfile.write(response)
+
+        def log_message(self, format, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}/v1", requests
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
 
 
 def _generator(tmp_path: Path, **config_values) -> tuple[MarkdownGenerator, Path]:
@@ -520,25 +569,24 @@ def test_page_summary_can_allow_key_over_remote_plain_http(monkeypatch, tmp_path
         ("dirhtml", False),
     ],
 )
-def test_page_summaries_in_full_build_matrix(monkeypatch, builder, parallel):
+def test_page_summaries_in_full_build_matrix(
+    monkeypatch, summary_server, builder, parallel
+):
     """Generated summaries work across supported builders and build modes."""
     monkeypatch.setenv("TEST_API_KEY", "secret")
+    base_url, requests = summary_server
     build = _build_sphinx(
         builder,
         {
             "llms_txt_build_parallel": parallel,
             "llms_txt_summary_enabled": True,
             "llms_txt_summary_model": "test-model",
-            "llms_txt_summary_base_url": "https://example.com/v1",
+            "llms_txt_summary_base_url": base_url,
             "llms_txt_summary_api_key_env": "TEST_API_KEY",
         },
     )
     try:
-        with patch(
-            "sphinx_llm.summary.summarize_text",
-            return_value="Generated page summary.",
-        ) as summarize:
-            app, build_dir, _ = next(build)
+        app, build_dir, _ = next(build)
 
         content = (build_dir / "llms.txt").read_text(encoding="utf-8")
         apples_line = next(
@@ -551,6 +599,7 @@ def test_page_summaries_in_full_build_matrix(monkeypatch, builder, parallel):
             line for line in content.splitlines() if _HTML_META_PAGE in line
         )
         assert meta_line.endswith(f": {authored}")
-        assert all(authored not in call.args[0] for call in summarize.call_args_list)
+        assert requests
+        assert all(authored not in str(request) for request in requests)
     finally:
         build.close()
