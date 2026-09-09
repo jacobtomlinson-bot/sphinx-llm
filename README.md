@@ -134,10 +134,10 @@ replace publishes `guide/index.md`.
 Each document has one canonical representation. Append and auto select the
 `.html.md` output. Replace selects the `.md` output that replaces `.html`.
 Each legacy compatibility mode selects its only output. `llms.txt`, the
-non-standard `llms-full.txt` convenience, generated Markdown links, and HTML
-discovery metadata all use this same target, so extra physical outputs never
-create duplicate entries. Links inside each physical output use that output's
-layout.
+non-standard `llms-full.txt` convenience when enabled, generated Markdown
+links, and HTML discovery metadata all use this same target, so extra physical
+outputs never create duplicate entries. Links inside each physical output use
+that output's layout.
 
 Generated paths selected by the configured mode are reserved for sphinx-llm and
 are overwritten during a build. Other existing files are left unchanged; the

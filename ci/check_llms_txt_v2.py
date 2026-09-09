@@ -112,21 +112,37 @@ def _canonical_markdown_path(
     return html_path.with_suffix(".md")
 
 
+def _html_path(app: Sphinx, build_root: Path, docname: str) -> PurePosixPath:
+    """Return a document's HTML artifact path relative to the build root."""
+    return PurePosixPath(
+        Path(app.builder.get_outfilename(docname))
+        .resolve()
+        .relative_to(build_root.resolve())
+        .as_posix()
+    )
+
+
+def _scope_contains(scope: PurePosixPath, page_directory: PurePosixPath) -> bool:
+    """Return whether an index scope covers a published page directory."""
+    return (
+        scope == PurePosixPath(".")
+        or page_directory == scope
+        or scope in page_directory.parents
+    )
+
+
 def _expected_markdown_paths(
     app: Sphinx, build_root: Path, suffix_mode: str
 ) -> set[PurePosixPath]:
     paths = set()
     for docname in app.env.found_docs:
-        html_path = PurePosixPath(
-            Path(app.builder.get_outfilename(docname))
-            .resolve()
-            .relative_to(build_root.resolve())
-            .as_posix()
-        )
+        html_path = _html_path(app, build_root, docname)
         paths.add(_canonical_markdown_path(html_path, suffix_mode))
         if suffix_mode == "append" and app.builder.name == "dirhtml":
             if docname == app.config.root_doc:
                 continue
+            # Append also emits the no-trailing-slash dirhtml companion:
+            # ``page.md``, or the directory name for an ``index`` document.
             doc_path = PurePosixPath(docname)
             paths.add(
                 doc_path.parent.with_suffix(".md")
@@ -139,12 +155,7 @@ def _expected_markdown_paths(
 def _expected_index_paths(app: Sphinx, build_root: Path) -> set[PurePosixPath]:
     indexes = {PurePosixPath("llms.txt")}
     for docname in app.env.found_docs - EXCLUDED_DOCNAMES:
-        html_path = PurePosixPath(
-            Path(app.builder.get_outfilename(docname))
-            .resolve()
-            .relative_to(build_root.resolve())
-            .as_posix()
-        )
+        html_path = _html_path(app, build_root, docname)
         for directory in (html_path.parent, *html_path.parent.parents):
             if directory == PurePosixPath("."):
                 break
@@ -203,16 +214,9 @@ def _expected_page_entries(
     scope = index_path.parent
     entries = []
     for docname in _ordered_docnames(app):
-        html_path = PurePosixPath(
-            Path(app.builder.get_outfilename(docname))
-            .resolve()
-            .relative_to(build_root.resolve())
-            .as_posix()
-        )
+        html_path = _html_path(app, build_root, docname)
         page_directory = html_path.parent
-        if scope != PurePosixPath(".") and not (
-            page_directory == scope or scope in page_directory.parents
-        ):
+        if not _scope_contains(scope, page_directory):
             continue
         markdown_path = _canonical_markdown_path(html_path, suffix_mode)
         url = (
@@ -336,18 +340,14 @@ def _audit_discovery(
 ) -> None:
     for docname in app.env.found_docs:
         html_file = Path(app.builder.get_outfilename(docname)).resolve()
-        html_path = PurePosixPath(
-            html_file.relative_to(build_root.resolve()).as_posix()
-        )
+        html_path = _html_path(app, build_root, docname)
         markdown_path = _canonical_markdown_path(html_path, suffix_mode)
         page_directory = html_path.parent
         covering_index = max(
             (
                 path
                 for path in index_paths
-                if path.parent == PurePosixPath(".")
-                or page_directory == path.parent
-                or path.parent in page_directory.parents
+                if _scope_contains(path.parent, page_directory)
             ),
             key=lambda path: len(path.parts),
         )

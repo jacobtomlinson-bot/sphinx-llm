@@ -47,6 +47,7 @@ def test_resolve_local_target_accepts_in_root_relative_and_absolute_urls(
         "page.md?download=1",
         "page.md#fragment",
         "..\\secret.md",
+        "page.md\0ignored",
     ],
 )
 def test_resolve_local_target_rejects_unsafe_urls(tmp_path: Path, url: str) -> None:

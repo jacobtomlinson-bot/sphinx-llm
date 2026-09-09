@@ -64,9 +64,10 @@ suffix values keep publishing `page.html.md`.
 
 `auto` now publishes both v2 append and replace outputs as a sphinx-llm
 compatibility convenience. Append is the canonical target, so each page still
-appears once in `llms.txt`, HTML discovery metadata, and the non-standard
-`llms-full.txt` convenience file. The extension owns files selected by the
-configured mode. It does not delete other files when the mode changes.
+appears once in `llms.txt` and HTML discovery metadata, and once in the
+non-standard `llms-full.txt` convenience file when that output is enabled. The
+extension owns files selected by the configured mode. It does not delete other
+files when the mode changes.
 
 The deprecated `:hash:` option remains accepted for existing `docref`
 directives. Matching pre-#115 MD5 hashes and PR #115 setting-aware hashes seed
