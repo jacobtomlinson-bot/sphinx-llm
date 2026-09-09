@@ -148,9 +148,10 @@ links to `index.html.md` in append or auto mode and `index.md` in replace mode.
 The `url-suffix` compatibility mode links to `../page.md`.
 
 Both links are relative to the published HTML URL, so they continue to work
-when the output is hosted below a site subpath. The `describedby` link currently
-uses the build's root `llms.txt`; when nested indexes are generated, it selects
-the most-specific generated index covering that page. Auxiliary HTML pages
+when the output is hosted below a site subpath. The `describedby` link selects
+the most-specific generated `llms.txt` covering that page. Set
+`llms_txt_nested_enabled = False` to make every page link to the root
+`llms.txt`. Auxiliary HTML pages
 without a Markdown representation, such as the search and general-index pages,
 do not receive discovery links.
 

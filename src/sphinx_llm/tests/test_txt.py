@@ -11,7 +11,7 @@ import re
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Generator
+from collections.abc import Generator, Iterable
 from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
@@ -1616,6 +1616,25 @@ def test_nested_indexes_identify_subsection_and_link_top_level(builder: str) -> 
         assert resolved_root == (build_dir / "llms.txt").resolve()
         assert_file_exists_with_content(resolved_root)
         assert "[llms-full.txt](" not in content
+
+
+def test_nested_sitemap_generation_sorts_pages_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Root and nested indexes share one global toctree ordering pass."""
+    sort_calls = 0
+    original = MarkdownGenerator._sorted_sitemap_files
+
+    def counted_sort(generator: MarkdownGenerator, files: Iterable[Path]) -> list[Path]:
+        nonlocal sort_calls
+        sort_calls += 1
+        return original(generator, files)
+
+    monkeypatch.setattr(MarkdownGenerator, "_sorted_sitemap_files", counted_sort)
+    build = _build_sphinx("dirhtml", {"llms_txt_build_parallel": False})
+    next(build)
+
+    assert sort_calls == 1
 
 
 @pytest.mark.parametrize(
