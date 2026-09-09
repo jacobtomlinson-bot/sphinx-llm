@@ -150,8 +150,8 @@ The `url-suffix` compatibility mode links to `../page.md`.
 Both links are relative to the published HTML URL, so they continue to work
 when the output is hosted below a site subpath. The `describedby` link selects
 the most-specific generated `llms.txt` covering that page. Set
-`llms_txt_nested_enabled = False` to make every page link to the root
-`llms.txt`. Auxiliary HTML pages
+`llms_txt_nested_enabled = False` to disable nested `llms.txt` pages and
+make every page link to the root `llms.txt`. Auxiliary HTML pages
 without a Markdown representation, such as the search and general-index pages,
 do not receive discovery links.
 
