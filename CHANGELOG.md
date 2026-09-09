@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
   each page's canonical Markdown representation and its covering `llms.txt`.
 - Added the llms.txt v2 `append` and `replace` suffix modes. For `dirhtml`,
   append publishes both `page.md` and `page/index.html.md`.
+- Generated scoped nested `llms.txt` indexes and most-specific discovery links.
 
 ### Fixed
 
